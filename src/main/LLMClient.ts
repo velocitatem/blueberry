@@ -67,22 +67,22 @@ export class LLMClient {
     return provider === "anthropic" ? "anthropic" : "openai";
   }
 
-  private getModelName = (): string => process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
+  private getModelName = (): string =>
+    process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
 
   private initializeModel(): LanguageModel | null {
     const apiKey = this.getApiKey();
     if (!apiKey) return null;
 
-    return this.provider === "anthropic" 
+    return this.provider === "anthropic"
       ? anthropic(this.modelName)
       : openai(this.modelName);
   }
 
-  private getApiKey = (): string | undefined => process.env[this.provider === "anthropic" 
-    ? "ANTHROPIC_API_KEY"
-     : "OPENAI_API_KEY"
-  ] as string | undefined;
-
+  private getApiKey = (): string | undefined =>
+    process.env[
+      this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"
+    ] as string | undefined;
 
   private getTools = (): ToolSet => createTools({ window: this.window });
 
@@ -118,8 +118,7 @@ export class LLMClient {
       }
 
       const userContent: Array<
-        | { type: "text"; text: string }
-        | { type: "image"; image: string }
+        { type: "text"; text: string } | { type: "image"; image: string }
       > = [];
 
       if (screenshot) {
@@ -145,7 +144,7 @@ export class LLMClient {
       if (!this.model) {
         this.sendErrorMessage(
           request.messageId,
-          "LLM service is not configured. Please add your API key to the .env file."
+          "LLM service is not configured. Please add your API key to the .env file.",
         );
         return;
       }
@@ -203,16 +202,16 @@ export class LLMClient {
 
     parts.push(
       "\nProvide helpful, accurate, and contextual responses about the current webpage.",
-      "If the user asks about specific content, use your tools to inspect the page when needed."
+      "If the user asks about specific content, use your tools to inspect the page when needed.",
     );
 
     return parts.join("\n") as string;
-  }
+  };
 
   private async streamResponse(
     messages: CoreMessage[],
     system: string,
-    messageId: string
+    messageId: string,
   ): Promise<void> {
     if (!this.model) {
       throw new Error("Model not initialized");
@@ -235,7 +234,7 @@ export class LLMClient {
 
   private async processStream(
     result: StreamTextResult<ToolSet, never>,
-    messageId: string
+    messageId: string,
   ): Promise<void> {
     const assistantMessage: CoreMessage = {
       role: "assistant",
@@ -275,7 +274,7 @@ export class LLMClient {
 
   private applyStepMessagesToHistory(
     steps: Array<StepResult<ToolSet>>,
-    placeholderIndex: number
+    placeholderIndex: number,
   ): void {
     const turnMessages: CoreMessage[] = [];
 

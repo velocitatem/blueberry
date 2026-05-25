@@ -50,7 +50,7 @@ const htmlToText = (html: string): string =>
 const withActiveTab = async <T extends Record<string, unknown>>(
   ctx: ToolContext,
   fn: (tab: ActiveTab) => Promise<T>,
-  errorKey: keyof T
+  errorKey: keyof T,
 ): Promise<T> => {
   const tab = ctx.window?.activeTab;
   if (!tab) return { [errorKey]: null, error: "No active tab" } as unknown as T;
@@ -71,7 +71,9 @@ const maxLengthSchema = z.object({
     .positive()
     .max(MAX_PAGE_CONTENT_LENGTH)
     .optional()
-    .describe(`Maximum characters to return (default ${MAX_PAGE_CONTENT_LENGTH})`),
+    .describe(
+      `Maximum characters to return (default ${MAX_PAGE_CONTENT_LENGTH})`,
+    ),
 });
 
 export const browserTools = registerTools({
@@ -92,10 +94,10 @@ export const browserTools = registerTools({
         async (tab) => ({
           text: truncate(
             (await tab.getTabText()) ?? "",
-            maxLength ?? MAX_PAGE_CONTENT_LENGTH
+            maxLength ?? MAX_PAGE_CONTENT_LENGTH,
           ),
         }),
-        "text"
+        "text",
       ),
   }),
 
@@ -109,10 +111,10 @@ export const browserTools = registerTools({
         async (tab) => ({
           html: truncate(
             (await tab.getTabHtml()) ?? "",
-            maxLength ?? MAX_PAGE_CONTENT_LENGTH
+            maxLength ?? MAX_PAGE_CONTENT_LENGTH,
           ),
         }),
-        "html"
+        "html",
       ),
   }),
 
@@ -128,7 +130,7 @@ export const browserTools = registerTools({
           await tab.loadURL(url);
           return { success: true as const, url: tab.url };
         },
-        "success"
+        "success",
       ),
   }),
 
@@ -142,7 +144,7 @@ export const browserTools = registerTools({
           tab.goBack();
           return { success: true as const, url: tab.url };
         },
-        "success"
+        "success",
       ),
   }),
 
@@ -156,7 +158,7 @@ export const browserTools = registerTools({
           tab.goForward();
           return { success: true as const, url: tab.url };
         },
-        "success"
+        "success",
       ),
   }),
 
@@ -170,7 +172,7 @@ export const browserTools = registerTools({
           tab.reload();
           return { success: true as const, url: tab.url };
         },
-        "success"
+        "success",
       ),
   }),
 
@@ -178,7 +180,10 @@ export const browserTools = registerTools({
     description:
       "Click an element on the active page using a CSS selector. Use this to interact with page controls.",
     inputSchema: z.object({
-      selector: z.string().min(1).describe("CSS selector for the target element"),
+      selector: z
+        .string()
+        .min(1)
+        .describe("CSS selector for the target element"),
     }),
     execute: ({ selector }, ctx) =>
       withActiveTab(
@@ -193,13 +198,19 @@ export const browserTools = registerTools({
           })()`)) as { success: boolean; message?: string } | null;
 
           if (!result) {
-            return { success: false as const, error: "Could not run script on this page" };
+            return {
+              success: false as const,
+              error: "Could not run script on this page",
+            };
           }
           return result.success
             ? { success: true as const }
-            : { success: false as const, error: result.message ?? "Element click failed" };
+            : {
+                success: false as const,
+                error: result.message ?? "Element click failed",
+              };
         },
-        "success"
+        "success",
       ),
   }),
 
@@ -207,12 +218,17 @@ export const browserTools = registerTools({
     description:
       "Type text into an input, textarea, or contenteditable element selected by CSS selector.",
     inputSchema: z.object({
-      selector: z.string().min(1).describe("CSS selector for the target input element"),
+      selector: z
+        .string()
+        .min(1)
+        .describe("CSS selector for the target input element"),
       text: z.string().describe("Text to type into the selected element"),
       submit: z
         .boolean()
         .optional()
-        .describe("Whether to submit by pressing Enter after typing (default false)"),
+        .describe(
+          "Whether to submit by pressing Enter after typing (default false)",
+        ),
     }),
     execute: ({ selector, text, submit = false }, ctx) =>
       withActiveTab(
@@ -252,21 +268,35 @@ export const browserTools = registerTools({
           })()`)) as { success: boolean; message?: string } | null;
 
           if (!result) {
-            return { success: false as const, error: "Could not run script on this page" };
+            return {
+              success: false as const,
+              error: "Could not run script on this page",
+            };
           }
           return result.success
             ? { success: true as const }
-            : { success: false as const, error: result.message ?? "Typing failed" };
+            : {
+                success: false as const,
+                error: result.message ?? "Typing failed",
+              };
         },
-        "success"
+        "success",
       ),
   }),
 
   scrollPage: defineTool({
     description: "Scroll the active page by pixel offsets.",
     inputSchema: z.object({
-      x: z.number().int().optional().describe("Horizontal scroll offset in pixels (default 0)"),
-      y: z.number().int().optional().describe("Vertical scroll offset in pixels (default 600)"),
+      x: z
+        .number()
+        .int()
+        .optional()
+        .describe("Horizontal scroll offset in pixels (default 0)"),
+      y: z
+        .number()
+        .int()
+        .optional()
+        .describe("Vertical scroll offset in pixels (default 600)"),
     }),
     execute: ({ x = 0, y = 600 }, ctx) =>
       withActiveTab(
@@ -275,14 +305,21 @@ export const browserTools = registerTools({
           const result = (await tab.runJs(`(() => {
             window.scrollBy(${x}, ${y});
             return { success: true, scrollX: window.scrollX, scrollY: window.scrollY };
-          })()`)) as { success: boolean; scrollX: number; scrollY: number } | null;
+          })()`)) as {
+            success: boolean;
+            scrollX: number;
+            scrollY: number;
+          } | null;
 
           if (!result) {
-            return { success: false as const, error: "Could not run script on this page" };
+            return {
+              success: false as const,
+              error: "Could not run script on this page",
+            };
           }
           return result;
         },
-        "success"
+        "success",
       ),
   }),
 
@@ -297,7 +334,9 @@ export const browserTools = registerTools({
         .positive()
         .max(10)
         .optional()
-        .describe(`Maximum number of results to return (default ${DEFAULT_SEARCH_RESULTS})`),
+        .describe(
+          `Maximum number of results to return (default ${DEFAULT_SEARCH_RESULTS})`,
+        ),
     }),
     execute: async ({ query, maxResults = DEFAULT_SEARCH_RESULTS }) => {
       try {
@@ -309,7 +348,10 @@ export const browserTools = registerTools({
 
         const response = await fetchWithTimeout(searchUrl.toString());
         if (!response.ok) {
-          return { results: [], error: `Search failed with status ${response.status}` };
+          return {
+            results: [],
+            error: `Search failed with status ${response.status}`,
+          };
         }
 
         const payload = (await response.json()) as {
@@ -325,7 +367,7 @@ export const browserTools = registerTools({
         };
 
         const flatTopics = (payload.RelatedTopics ?? []).flatMap((topic) =>
-          topic.Topics ? topic.Topics : [topic]
+          topic.Topics ? topic.Topics : [topic],
         );
 
         const results = flatTopics
@@ -365,7 +407,9 @@ export const browserTools = registerTools({
         .positive()
         .max(MAX_WEB_FETCH_LENGTH)
         .optional()
-        .describe(`Maximum characters to return (default ${MAX_WEB_FETCH_LENGTH})`),
+        .describe(
+          `Maximum characters to return (default ${MAX_WEB_FETCH_LENGTH})`,
+        ),
     }),
     execute: async ({ url, maxLength }) => {
       try {
@@ -386,7 +430,8 @@ export const browserTools = registerTools({
         const contentType = response.headers.get("content-type") ?? "";
         const body = await response.text();
         const normalized =
-          contentType.includes("text/html") || contentType.includes("application/xhtml+xml")
+          contentType.includes("text/html") ||
+          contentType.includes("application/xhtml+xml")
             ? htmlToText(body)
             : body;
 
