@@ -193,7 +193,7 @@ export class LLMClient {
       "You are a helpful AI assistant integrated into a web browser.",
       "You can analyze and discuss web pages with the user.",
       "The user's messages may include a screenshot of the current page as the first image.",
-      "You have tools to read page text/HTML, get the current URL, and navigate the active tab.",
+      "You have tools to inspect pages, navigate, search/fetch web content, and interact with page elements.",
       "Use tools when you need up-to-date page content instead of guessing.",
     ];
 
