@@ -29,8 +29,7 @@ const topBarAPI = {
     electronAPI.ipcRenderer.invoke("tab-run-js", tabId, code),
 
   // Sidebar
-  toggleSidebar: () =>
-    electronAPI.ipcRenderer.invoke("toggle-sidebar"),
+  toggleSidebar: () => electronAPI.ipcRenderer.invoke("toggle-sidebar"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to
@@ -41,7 +40,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld("electron", electronAPI);
     contextBridge.exposeInMainWorld("topBarAPI", topBarAPI);
   } catch (error) {
-    console.error(error);
+    console.error("Failed to expose topbar preload APIs", error);
   }
 } else {
   // @ts-ignore (define in dts)
@@ -49,4 +48,3 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.topBarAPI = topBarAPI;
 }
-

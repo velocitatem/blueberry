@@ -33,7 +33,7 @@ const sidebarAPI = {
 
   onMessagesUpdated: (callback: (messages: any[]) => void) => {
     electronAPI.ipcRenderer.on("chat-messages-updated", (_, messages) =>
-      callback(messages)
+      callback(messages),
     );
   },
 
@@ -62,7 +62,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld("electron", electronAPI);
     contextBridge.exposeInMainWorld("sidebarAPI", sidebarAPI);
   } catch (error) {
-    console.error(error);
+    console.error("Failed to expose sidebar preload APIs", error);
   }
 } else {
   // @ts-ignore (define in dts)

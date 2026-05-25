@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createLogger } from '@common/lib/logger'
+
+const log = createLogger('topbar')
 
 interface TabInfo {
     id: string
@@ -50,7 +53,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const tabsData = await window.topBarAPI.getTabs()
             setTabs(tabsData)
         } catch (error) {
-            console.error('Failed to refresh tabs:', error)
+            log.error({ err: error }, 'Failed to refresh tabs')
         }
     }, [])
 
@@ -60,7 +63,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             await window.topBarAPI.createTab(url)
             await refreshTabs()
         } catch (error) {
-            console.error('Failed to create tab:', error)
+            log.error({ err: error }, 'Failed to create tab')
         } finally {
             setIsLoading(false)
         }
@@ -72,7 +75,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             await window.topBarAPI.closeTab(tabId)
             await refreshTabs()
         } catch (error) {
-            console.error('Failed to close tab:', error)
+            log.error({ err: error }, 'Failed to close tab')
         } finally {
             setIsLoading(false)
         }
@@ -84,7 +87,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             await window.topBarAPI.switchTab(tabId)
             await refreshTabs()
         } catch (error) {
-            console.error('Failed to switch tab:', error)
+            log.error({ err: error }, 'Failed to switch tab')
         } finally {
             setIsLoading(false)
         }
@@ -99,7 +102,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             // Wait a bit for navigation to start, then refresh tabs to get updated URL
             setTimeout(() => refreshTabs(), 500)
         } catch (error) {
-            console.error('Failed to navigate:', error)
+            log.error({ err: error }, 'Failed to navigate')
         } finally {
             setIsLoading(false)
         }
@@ -112,7 +115,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             await window.topBarAPI.goBack(activeTab.id)
             setTimeout(() => refreshTabs(), 500)
         } catch (error) {
-            console.error('Failed to go back:', error)
+            log.error({ err: error }, 'Failed to go back')
         }
     }, [activeTab, refreshTabs])
 
@@ -123,7 +126,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             await window.topBarAPI.goForward(activeTab.id)
             setTimeout(() => refreshTabs(), 500)
         } catch (error) {
-            console.error('Failed to go forward:', error)
+            log.error({ err: error }, 'Failed to go forward')
         }
     }, [activeTab, refreshTabs])
 
@@ -134,7 +137,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
             await window.topBarAPI.reload(activeTab.id)
             setTimeout(() => refreshTabs(), 500)
         } catch (error) {
-            console.error('Failed to reload:', error)
+            log.error({ err: error }, 'Failed to reload')
         }
     }, [activeTab, refreshTabs])
 
@@ -142,7 +145,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
         try {
             return await window.topBarAPI.tabScreenshot(tabId)
         } catch (error) {
-            console.error('Failed to take screenshot:', error)
+            log.error({ err: error }, 'Failed to take screenshot')
             return null
         }
     }, [])
@@ -151,7 +154,7 @@ export const BrowserProvider: React.FC<{ children: React.ReactNode }> = ({ child
         try {
             return await window.topBarAPI.tabRunJs(tabId, code)
         } catch (error) {
-            console.error('Failed to run JavaScript:', error)
+            log.error({ err: error }, 'Failed to run JavaScript')
             return null
         }
     }, [])

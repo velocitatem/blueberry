@@ -4,9 +4,14 @@ import { Window } from "./Window";
 import { AppMenu } from "./Menu";
 import { EventRegistry } from "./ipc/EventRegistry";
 import { registerWindowEvents } from "./ipc/registerWindowEvents";
+import { createKafkaEventPublisher } from "./kafka";
+import { createLogger } from "./logger";
+
+const log = createLogger("app");
 
 let mainWindow: Window | null = null;
 let menu: AppMenu | null = null;
+const kafkaEventPublisher = createKafkaEventPublisher();
 
 /** App-wide IPC registry; tracks channels this app registered for safe teardown. */
 export let appEventRegistry: EventRegistry | null = null;
@@ -14,7 +19,8 @@ export let appEventRegistry: EventRegistry | null = null;
 const createWindow = (): Window => {
   appEventRegistry?.cleanup();
 
-  appEventRegistry = appEventRegistry ?? new EventRegistry();
+  appEventRegistry =
+    appEventRegistry ?? new EventRegistry(kafkaEventPublisher.publish);
   // lets us extensably in the future manage new tabs and windows
 
   const window = new Window();
@@ -23,10 +29,16 @@ const createWindow = (): Window => {
   return window;
 };
 
+const connectKafkaEvents = (): void => {
+  void kafkaEventPublisher.connect();
+};
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId("com.electron");
+  log.info("Application starting");
 
   mainWindow = createWindow();
+  connectKafkaEvents();
 
   app.on("activate", () => {
     // On macOS it's common to re-create a window in the app when the
@@ -35,6 +47,10 @@ app.whenReady().then(() => {
       mainWindow = createWindow();
     }
   });
+});
+
+app.on("before-quit", () => {
+  void kafkaEventPublisher.disconnect();
 });
 
 app.on("window-all-closed", () => {

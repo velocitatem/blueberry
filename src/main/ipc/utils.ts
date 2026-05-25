@@ -1,6 +1,9 @@
 import type { WebContents } from "electron";
 import type { Tab } from "../Tab";
 import type { Window } from "../Window";
+import { createLogger } from "../logger";
+
+const log = createLogger("ipc");
 
 export function expectString(value: unknown, name: string): string {
   if (typeof value !== "string") {
@@ -13,7 +16,7 @@ export async function safeNull<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
     return await fn();
   } catch (error) {
-    console.error(error);
+    log.error({ err: error }, "IPC handler failed");
     return null;
   }
 }

@@ -14,6 +14,9 @@ import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
 import { createTools } from "./llm";
+import { createLogger } from "./logger";
+
+const log = createLogger("llm");
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -85,15 +88,16 @@ export class LLMClient {
 
   private logInitializationStatus(): void {
     if (this.model) {
-      console.log(
-        `✅ LLM Client initialized with ${this.provider} provider using model: ${this.modelName}`
+      log.info(
+        { provider: this.provider, model: this.modelName },
+        "LLM client initialized",
       );
     } else {
       const keyName =
         this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-      console.error(
-        `❌ LLM Client initialization failed: ${keyName} not found in environment variables.\n` +
-          `Please add your API key to the .env file in the project root.`
+      log.error(
+        { provider: this.provider, keyName },
+        "LLM client initialization failed: API key not found",
       );
     }
   }
@@ -108,7 +112,7 @@ export class LLMClient {
             const image = await activeTab.screenshot();
             screenshot = image.toDataURL();
           } catch (error) {
-            console.error("Failed to capture screenshot:", error);
+            log.error({ err: error }, "Failed to capture screenshot");
           }
         }
       }
@@ -149,7 +153,7 @@ export class LLMClient {
       const { messages, system } = await this.prepareMessagesWithContext();
       await this.streamResponse(messages, system, request.messageId);
     } catch (error) {
-      console.error("Error in LLM request:", error);
+      log.error({ err: error }, "Error in LLM request");
       this.handleStreamError(error, request.messageId);
     }
   }
@@ -290,7 +294,7 @@ export class LLMClient {
   }
 
   private handleStreamError(error: unknown, messageId: string): void {
-    console.error("Error streaming from LLM:", error);
+    log.error({ err: error }, "Error streaming from LLM");
 
     const errorMessage = this.getErrorMessage(error);
     this.sendErrorMessage(messageId, errorMessage);

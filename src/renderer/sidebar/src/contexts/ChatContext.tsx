@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createLogger } from '@common/lib/logger'
+
+const log = createLogger('sidebar')
 
 interface Message {
     id: string
@@ -55,7 +58,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     setMessages(convertedMessages)
                 }
             } catch (error) {
-                console.error('Failed to load messages:', error)
+                log.error({ err: error }, 'Failed to load messages')
             }
         }
         loadMessages()
@@ -75,7 +78,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Messages will be updated via the chat-messages-updated event
         } catch (error) {
-            console.error('Failed to send message:', error)
+            log.error({ err: error }, 'Failed to send message')
         } finally {
             setIsLoading(false)
         }
@@ -86,7 +89,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await window.sidebarAPI.clearChat()
             setMessages([])
         } catch (error) {
-            console.error('Failed to clear chat:', error)
+            log.error({ err: error }, 'Failed to clear chat')
         }
     }, [])
 
@@ -94,7 +97,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             return await window.sidebarAPI.getPageContent()
         } catch (error) {
-            console.error('Failed to get page content:', error)
+            log.error({ err: error }, 'Failed to get page content')
             return null
         }
     }, [])
@@ -103,7 +106,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             return await window.sidebarAPI.getPageText()
         } catch (error) {
-            console.error('Failed to get page text:', error)
+            log.error({ err: error }, 'Failed to get page text')
             return null
         }
     }, [])
@@ -112,7 +115,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             return await window.sidebarAPI.getCurrentUrl()
         } catch (error) {
-            console.error('Failed to get current URL:', error)
+            log.error({ err: error }, 'Failed to get current URL')
             return null
         }
     }, [])
