@@ -24,12 +24,7 @@ const fetchWithTimeout = async (url: string): Promise<Response> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TOOL_REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "user-agent": "BlueberryBrowserAgent/1.0",
-      },
-    });
+    return await fetch(url, { signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }
@@ -37,13 +32,9 @@ const fetchWithTimeout = async (url: string): Promise<Response> => {
 
 const htmlToText = (html: string): string =>
   html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -193,7 +184,9 @@ export const browserTools = registerTools({
           const result = (await tab.runJs(`(() => {
             const element = document.querySelector(${selectorJson});
             if (!element) return { success: false, message: "Element not found" };
-            (element instanceof HTMLElement) && element.click();
+            if (element instanceof HTMLElement) {
+              element.click();
+            }
             return { success: true };
           })()`)) as { success: boolean; message?: string } | null;
 
@@ -302,8 +295,10 @@ export const browserTools = registerTools({
       withActiveTab(
         ctx,
         async (tab) => {
+          const xJson = JSON.stringify(x);
+          const yJson = JSON.stringify(y);
           const result = (await tab.runJs(`(() => {
-            window.scrollBy(${x}, ${y});
+            window.scrollBy(${xJson}, ${yJson});
             return { success: true, scrollX: window.scrollX, scrollY: window.scrollY };
           })()`)) as {
             success: boolean;
