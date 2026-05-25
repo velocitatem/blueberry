@@ -32,8 +32,6 @@ const fetchWithTimeout = async (url: string): Promise<Response> => {
 
 const htmlToText = (html: string): string =>
   html
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -186,8 +184,9 @@ export const browserTools = registerTools({
             if (!element) return { success: false, message: "Element not found" };
             if (element instanceof HTMLElement) {
               element.click();
+              return { success: true };
             }
-            return { success: true };
+            return { success: false, message: "Element is not clickable" };
           })()`)) as { success: boolean; message?: string } | null;
 
           if (!result) {
@@ -335,7 +334,7 @@ export const browserTools = registerTools({
     }),
     execute: async ({ query, maxResults = DEFAULT_SEARCH_RESULTS }) => {
       try {
-        const searchUrl = new URL("https://api.duckduckgo.com/");
+        const searchUrl = ensureWebUrl("https://api.duckduckgo.com/");
         searchUrl.searchParams.set("q", query);
         searchUrl.searchParams.set("format", "json");
         searchUrl.searchParams.set("no_html", "1");
