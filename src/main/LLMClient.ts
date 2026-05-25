@@ -153,8 +153,8 @@ export class LLMClient {
         return;
       }
 
-      const messages = await this.prepareMessagesWithContext(request);
-      await this.streamResponse(messages, request.messageId);
+      const { messages, system } = await this.prepareMessagesWithContext();
+      await this.streamResponse(messages, system, request.messageId);
     } catch (error) {
       console.error("Error in LLM request:", error);
       this.handleStreamError(error, request.messageId);
@@ -174,31 +174,30 @@ export class LLMClient {
     this.webContents.send("chat-messages-updated", this.messages);
   }
 
-  private async prepareMessagesWithContext(_request: ChatRequest): Promise<CoreMessage[]> {
-    // Get page context from active tab
+  private async prepareMessagesWithContext(): Promise<{
+    messages: CoreMessage[];
+    system: string;
+  }> {
     let pageUrl: string | null = null;
     let pageText: string | null = null;
-    
+
     if (this.window) {
       const activeTab = this.window.activeTab;
       if (activeTab) {
         pageUrl = activeTab.url;
         try {
-          pageText = await activeTab.getTabText();
+          const text = await activeTab.getTabText();
+          pageText = text || null;
         } catch (error) {
           console.error("Failed to get page text:", error);
         }
       }
     }
 
-    // Build system message
-    const systemMessage: CoreMessage = {
-      role: "system",
-      content: this.buildSystemPrompt(pageUrl, pageText),
+    return {
+      messages: this.messages,
+      system: this.buildSystemPrompt(pageUrl, pageText),
     };
-
-    // Include all messages in history (system + conversation)
-    return [systemMessage, ...this.messages];
   }
 
   private buildSystemPrompt(url: string | null, pageText: string | null): string {
@@ -232,6 +231,7 @@ export class LLMClient {
 
   private async streamResponse(
     messages: CoreMessage[],
+    system: string,
     messageId: string
   ): Promise<void> {
     if (!this.model) {
@@ -241,6 +241,7 @@ export class LLMClient {
     try {
       const result = await streamText({
         model: this.model,
+        system,
         messages,
         temperature: DEFAULT_TEMPERATURE,
         maxRetries: 3,

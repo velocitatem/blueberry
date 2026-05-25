@@ -17,7 +17,8 @@ export class Tab {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: true,
+        // sandbox must be false for executeJavaScript (page text extraction)
+        sandbox: false,
         webSecurity: true,
       },
     });
@@ -85,16 +86,58 @@ export class Tab {
     return await this.webContentsView.webContents.capturePage();
   }
 
+  private canRunPageScript(): boolean {
+    const url = this.webContentsView.webContents.getURL();
+    if (!url || url === "about:blank") return false;
+    return !/^(chrome|chrome-extension|devtools|file):/i.test(url);
+  }
+
+  private async waitForPageReady(): Promise<void> {
+    const webContents = this.webContentsView.webContents;
+    if (!webContents.isLoading() || !webContents.getURL()) return;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+      };
+      const timeout = setTimeout(done, 5000);
+      webContents.once("dom-ready", done);
+      if (!webContents.isLoading()) done();
+    });
+  }
+
   async runJs(code: string): Promise<any> {
+    if (!this.canRunPageScript()) return null;
+    await this.waitForPageReady();
     return await this.webContentsView.webContents.executeJavaScript(code);
   }
 
   async getTabHtml(): Promise<string> {
-    return await this.runJs("return document.documentElement.outerHTML");
+    return await this.runJs(
+      `(() => {
+        try {
+          return document.documentElement?.outerHTML ?? '';
+        } catch {
+          return '';
+        }
+      })()`
+    ) ?? "";
   }
 
   async getTabText(): Promise<string> {
-    return await this.runJs("return document.documentElement.innerText");
+    return await this.runJs(
+      `(() => {
+        try {
+          return document.documentElement?.innerText ?? ''
+        } catch {
+          return '';
+        }
+      })()`
+    ) ?? "";
   }
 
   loadURL(url: string): Promise<void> {
@@ -103,15 +146,13 @@ export class Tab {
   }
 
   goBack(): void {
-    if (this.webContentsView.webContents.navigationHistory.canGoBack()) {
-      this.webContentsView.webContents.navigationHistory.goBack();
-    }
+    if (!this.webContentsView.webContents.navigationHistory.canGoBack()) return;
+    this.webContentsView.webContents.navigationHistory.goBack();
   }
 
   goForward(): void {
-    if (this.webContentsView.webContents.navigationHistory.canGoForward()) {
-      this.webContentsView.webContents.navigationHistory.goForward();
-    }
+    if (!this.webContentsView.webContents.navigationHistory.canGoForward()) return;
+    this.webContentsView.webContents.navigationHistory.goForward();
   }
 
   reload(): void {

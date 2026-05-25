@@ -105,25 +105,22 @@ export class AppMenu {
 
   // Menu action handlers
   private handleNewTab(): void {
-    this.mainWindow.createTab("https://www.google.com");
+    this.mainWindow.createTab("https://strawberrybrowser.com/");
   }
 
   private handleCloseTab(): void {
-    if (this.mainWindow.activeTab) {
-      this.mainWindow.closeTab(this.mainWindow.activeTab.id);
-    }
+    if (!this.mainWindow.activeTab) return;
+    this.mainWindow.closeTab(this.mainWindow.activeTab.id);
   }
 
   private handleReload(): void {
-    if (this.mainWindow.activeTab) {
-      this.mainWindow.activeTab.reload();
-    }
+    if (!this.mainWindow.activeTab) return;
+    this.mainWindow.activeTab.reload();
   }
 
   private handleForceReload(): void {
-    if (this.mainWindow.activeTab) {
-      this.mainWindow.activeTab.webContents.reloadIgnoringCache();
-    }
+    if (!this.mainWindow.activeTab) return;
+    this.mainWindow.activeTab.webContents.reloadIgnoringCache();
   }
 
   private handleToggleSidebar(): void {
@@ -132,25 +129,23 @@ export class AppMenu {
   }
 
   private handleToggleDevTools(): void {
-    if (this.mainWindow.activeTab) {
-      this.mainWindow.activeTab.webContents.toggleDevTools();
-    }
+    if (!this.mainWindow.activeTab) return;
+    this.mainWindow.activeTab.webContents.toggleDevTools();
   }
 
   private handleToggleFullscreen(): void {
-    const isFullScreen = this.mainWindow.baseWindow.isFullScreen();
-    this.mainWindow.baseWindow.setFullScreen(!isFullScreen);
+    this.mainWindow.baseWindow.setFullScreen(
+      !this.mainWindow.baseWindow.isFullScreen()
+    );
   }
 
   private handleGoBack(): void {
-    if (this.mainWindow.activeTab) {
-      this.mainWindow.activeTab.goBack();
-    }
+    if (!this.mainWindow.activeTab) return;
+    this.mainWindow.activeTab.goBack();
   }
 
   private handleGoForward(): void {
-    if (this.mainWindow.activeTab) {
-      this.mainWindow.activeTab.goForward();
-    }
+    if (!this.mainWindow.activeTab) return;
+    this.mainWindow.activeTab.goForward();
   }
 }
