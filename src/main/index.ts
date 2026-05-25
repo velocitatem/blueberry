@@ -2,16 +2,23 @@ import { app, BrowserWindow } from "electron";
 import { electronApp } from "@electron-toolkit/utils";
 import { Window } from "./Window";
 import { AppMenu } from "./Menu";
-import { EventManager } from "./EventManager";
+import { EventRegistry } from "./ipc/EventRegistry";
+import { registerWindowEvents } from "./ipc/registerWindowEvents";
 
 let mainWindow: Window | null = null;
-let eventManager: EventManager | null = null;
 let menu: AppMenu | null = null;
 
+/** App-wide IPC registry; tracks channels this app registered for safe teardown. */
+export let appEventRegistry: EventRegistry | null = null;
+
 const createWindow = (): Window => {
+  appEventRegistry?.cleanup();
+
+  appEventRegistry = appEventRegistry ?? new EventRegistry();
+
   const window = new Window();
   menu = new AppMenu(window);
-  eventManager = new EventManager(window);
+  registerWindowEvents(appEventRegistry, window);
   return window;
 };
 
@@ -30,12 +37,9 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  if (eventManager) {
-    eventManager.cleanup();
-    eventManager = null;
-  }
+  appEventRegistry?.cleanup();
+  appEventRegistry = null;
 
-  // Clean up references
   if (mainWindow) {
     mainWindow = null;
   }
