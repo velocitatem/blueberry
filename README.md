@@ -72,12 +72,12 @@ It can also be a good way for us to give feedback if things are heading in the r
 
 ### Install
 ```bash
-$ pnpm install
+$ bun install
 ```
 
 ### Development
 ```bash
-$ pnpm dev
+$ bun dev
 ```
 
 **Add an OpenAI API key to `.env`** in the root folder.
