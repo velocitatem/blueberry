@@ -15,6 +15,7 @@ const createWindow = (): Window => {
   appEventRegistry?.cleanup();
 
   appEventRegistry = appEventRegistry ?? new EventRegistry();
+  // lets us extensably in the future manage new tabs and windows
 
   const window = new Window();
   menu = new AppMenu(window);

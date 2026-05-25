@@ -7,10 +7,10 @@ export class Tab {
   private _url: string;
   private _isVisible: boolean = false;
 
-  constructor(id: string, url: string = "https://www.google.com") {
+  constructor(id: string, url: string = "https://strawberrybrowser.com") {
     this._id = id;
     this._url = url;
-    this._title = "New Tab";
+    this._title = "Strawberry Browser";
 
     // Create the WebContentsView for web content only
     this.webContentsView = new WebContentsView({
