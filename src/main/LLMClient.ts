@@ -1,10 +1,19 @@
 import { WebContents } from "electron";
-import { streamText, type LanguageModel, type CoreMessage } from "ai";
+import {
+  streamText,
+  stepCountIs,
+  type LanguageModel,
+  type CoreMessage,
+  type StepResult,
+  type StreamTextResult,
+  type ToolSet,
+} from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
+import { createTools } from "./llm";
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
@@ -22,12 +31,12 @@ interface StreamChunk {
 type LLMProvider = "openai" | "anthropic";
 
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-4o-mini",
+  openai: "gpt-5-nano",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
-const MAX_CONTEXT_LENGTH = 4000;
 const DEFAULT_TEMPERATURE = 0.7;
+const MAX_TOOL_STEPS = 10;
 
 export class LLMClient {
   private readonly webContents: WebContents;
@@ -46,45 +55,33 @@ export class LLMClient {
     this.logInitializationStatus();
   }
 
-  // Set the window reference after construction to avoid circular dependencies
   setWindow(window: Window): void {
     this.window = window;
   }
 
   private getProvider(): LLMProvider {
     const provider = process.env.LLM_PROVIDER?.toLowerCase();
-    if (provider === "anthropic") return "anthropic";
-    return "openai"; // Default to OpenAI
+    return provider === "anthropic" ? "anthropic" : "openai";
   }
 
-  private getModelName(): string {
-    return process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
-  }
+  private getModelName = (): string => process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
 
   private initializeModel(): LanguageModel | null {
     const apiKey = this.getApiKey();
     if (!apiKey) return null;
 
-    switch (this.provider) {
-      case "anthropic":
-        return anthropic(this.modelName);
-      case "openai":
-        return openai(this.modelName);
-      default:
-        return null;
-    }
+    return this.provider === "anthropic" 
+      ? anthropic(this.modelName)
+      : openai(this.modelName);
   }
 
-  private getApiKey(): string | undefined {
-    switch (this.provider) {
-      case "anthropic":
-        return process.env.ANTHROPIC_API_KEY;
-      case "openai":
-        return process.env.OPENAI_API_KEY;
-      default:
-        return undefined;
-    }
-  }
+  private getApiKey = (): string | undefined => process.env[this.provider === "anthropic" 
+    ? "ANTHROPIC_API_KEY"
+     : "OPENAI_API_KEY"
+  ] as string | undefined;
+
+
+  private getTools = (): ToolSet => createTools({ window: this.window });
 
   private logInitializationStatus(): void {
     if (this.model) {
@@ -103,7 +100,6 @@ export class LLMClient {
 
   async sendChatMessage(request: ChatRequest): Promise<void> {
     try {
-      // Get screenshot from active tab if available
       let screenshot: string | null = null;
       if (this.window) {
         const activeTab = this.window.activeTab;
@@ -117,32 +113,29 @@ export class LLMClient {
         }
       }
 
-      // Build user message content with screenshot first, then text
-      const userContent: any[] = [];
-      
-      // Add screenshot as the first part if available
+      const userContent: Array<
+        | { type: "text"; text: string }
+        | { type: "image"; image: string }
+      > = [];
+
       if (screenshot) {
         userContent.push({
           type: "image",
           image: screenshot,
         });
       }
-      
-      // Add text content
+
       userContent.push({
         type: "text",
         text: request.message,
       });
 
-      // Create user message in CoreMessage format
       const userMessage: CoreMessage = {
         role: "user",
         content: userContent.length === 1 ? request.message : userContent,
       };
-      
-      this.messages.push(userMessage);
 
-      // Send updated messages to renderer
+      this.messages.push(userMessage);
       this.sendMessagesToRenderer();
 
       if (!this.model) {
@@ -166,9 +159,7 @@ export class LLMClient {
     this.sendMessagesToRenderer();
   }
 
-  getMessages(): CoreMessage[] {
-    return this.messages;
-  }
+  getMessages = (): CoreMessage[] => this.messages;
 
   private sendMessagesToRenderer(): void {
     this.webContents.send("chat-messages-updated", this.messages);
@@ -179,54 +170,39 @@ export class LLMClient {
     system: string;
   }> {
     let pageUrl: string | null = null;
-    let pageText: string | null = null;
 
     if (this.window) {
       const activeTab = this.window.activeTab;
       if (activeTab) {
         pageUrl = activeTab.url;
-        try {
-          const text = await activeTab.getTabText();
-          pageText = text || null;
-        } catch (error) {
-          console.error("Failed to get page text:", error);
-        }
       }
     }
 
     return {
       messages: this.messages,
-      system: this.buildSystemPrompt(pageUrl, pageText),
+      system: this.buildSystemPrompt(pageUrl),
     };
   }
 
-  private buildSystemPrompt(url: string | null, pageText: string | null): string {
-    const parts: string[] = [
+  private buildSystemPrompt = (url: string | null): string => {
+    const parts = [
       "You are a helpful AI assistant integrated into a web browser.",
       "You can analyze and discuss web pages with the user.",
-      "The user's messages may include screenshots of the current page as the first image.",
+      "The user's messages may include a screenshot of the current page as the first image.",
+      "You have tools to read page text/HTML, get the current URL, and navigate the active tab.",
+      "Use tools when you need up-to-date page content instead of guessing.",
     ];
 
     if (url) {
       parts.push(`\nCurrent page URL: ${url}`);
     }
 
-    if (pageText) {
-      const truncatedText = this.truncateText(pageText, MAX_CONTEXT_LENGTH);
-      parts.push(`\nPage content (text):\n${truncatedText}`);
-    }
-
     parts.push(
-      "\nPlease provide helpful, accurate, and contextual responses about the current webpage.",
-      "If the user asks about specific content, refer to the page content and/or screenshot provided."
+      "\nProvide helpful, accurate, and contextual responses about the current webpage.",
+      "If the user asks about specific content, use your tools to inspect the page when needed."
     );
 
-    return parts.join("\n");
-  }
-
-  private truncateText(text: string, maxLength: number): string {
-    if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength) + "...";
+    return parts.join("\n") as string;
   }
 
   private async streamResponse(
@@ -238,42 +214,38 @@ export class LLMClient {
       throw new Error("Model not initialized");
     }
 
-    try {
-      const result = await streamText({
-        model: this.model,
-        system,
-        messages,
-        temperature: DEFAULT_TEMPERATURE,
-        maxRetries: 3,
-        abortSignal: undefined, // Could add abort controller for cancellation
-      });
+    const tools = this.getTools();
 
-      await this.processStream(result.textStream, messageId);
-    } catch (error) {
-      throw error; // Re-throw to be handled by the caller
-    }
+    const result = streamText({
+      model: this.model,
+      system,
+      messages,
+      tools,
+      stopWhen: stepCountIs(MAX_TOOL_STEPS),
+      temperature: DEFAULT_TEMPERATURE,
+      maxRetries: 3,
+    });
+
+    await this.processStream(result, messageId);
   }
 
   private async processStream(
-    textStream: AsyncIterable<string>,
+    result: StreamTextResult<ToolSet, never>,
     messageId: string
   ): Promise<void> {
-    let accumulatedText = "";
-
-    // Create a placeholder assistant message
     const assistantMessage: CoreMessage = {
       role: "assistant",
       content: "",
     };
-    
-    // Keep track of the index for updates
+
     const messageIndex = this.messages.length;
     this.messages.push(assistantMessage);
 
-    for await (const chunk of textStream) {
+    let accumulatedText = "";
+
+    for await (const chunk of result.textStream) {
       accumulatedText += chunk;
 
-      // Update assistant message content
       this.messages[messageIndex] = {
         role: "assistant",
         content: accumulatedText,
@@ -286,18 +258,35 @@ export class LLMClient {
       });
     }
 
-    // Final update with complete content
-    this.messages[messageIndex] = {
-      role: "assistant",
-      content: accumulatedText,
-    };
-    this.sendMessagesToRenderer();
+    const steps = await result.steps;
+    this.applyStepMessagesToHistory(steps, messageIndex);
 
-    // Send the final complete signal
+    const finalText = await result.text;
+
     this.sendStreamChunk(messageId, {
-      content: accumulatedText,
+      content: finalText,
       isComplete: true,
     });
+  }
+
+  private applyStepMessagesToHistory(
+    steps: Array<StepResult<ToolSet>>,
+    placeholderIndex: number
+  ): void {
+    const turnMessages: CoreMessage[] = [];
+
+    for (const step of steps) {
+      for (const message of step.response.messages) {
+        turnMessages.push(message as CoreMessage);
+      }
+    }
+
+    if (turnMessages.length === 0) {
+      return;
+    }
+
+    this.messages.splice(placeholderIndex, 1, ...turnMessages);
+    this.sendMessagesToRenderer();
   }
 
   private handleStreamError(error: unknown, messageId: string): void {
