@@ -1,24 +1,18 @@
-import { WebContents } from "electron";
-import {
-  streamText,
-  stepCountIs,
-  type LanguageModel,
-  type CoreMessage,
-  type StepResult,
-  type StreamTextResult,
-  type ToolSet,
-} from "ai";
-import { openai } from "@ai-sdk/openai";
-import { anthropic } from "@ai-sdk/anthropic";
+import { NativeImage, WebContents } from "electron";
+import type { CoreMessage, LanguageModel } from "ai";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import type { Window } from "./Window";
-import { createTools } from "./llm";
+import {
+  createChatBackend,
+  type BackendContext,
+  type ChatBackend,
+  type StreamChunk,
+} from "./llm";
 import { createLogger } from "./logger";
 
 const log = createLogger("llm");
 
-// Load environment variables from .env file
 dotenv.config({ path: join(__dirname, "../../.env") });
 
 interface ChatRequest {
@@ -26,322 +20,92 @@ interface ChatRequest {
   messageId: string;
 }
 
-interface StreamChunk {
-  content: string;
-  isComplete: boolean;
-}
-
-type LLMProvider = "openai" | "anthropic";
-
-const DEFAULT_MODELS: Record<LLMProvider, string> = {
-  openai: "gpt-5-nano",
-  anthropic: "claude-3-5-sonnet-20241022",
-};
-
-const DEFAULT_TEMPERATURE = 0.7;
-const MAX_TOOL_STEPS = 10;
+const SCREENSHOT_MAX_WIDTH = 896;
 
 export class LLMClient {
   private readonly webContents: WebContents;
+  private readonly backend: ChatBackend;
   private window: Window | null = null;
-  private readonly provider: LLMProvider;
-  private readonly modelName: string;
-  private readonly model: LanguageModel | null;
   private messages: CoreMessage[] = [];
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
-    this.provider = this.getProvider();
-    this.modelName = this.getModelName();
-    this.model = this.initializeModel();
-
-    this.logInitializationStatus();
+    this.backend = createChatBackend();
+    log.info({ backend: this.backend.id, ready: this.backend.isReady() }, "LLM client initialized");
+    void this.backend.logStartup?.();
   }
 
   setWindow(window: Window): void {
     this.window = window;
   }
 
-  private getProvider(): LLMProvider {
-    const provider = process.env.LLM_PROVIDER?.toLowerCase();
-    return provider === "anthropic" ? "anthropic" : "openai";
-  }
+  getMessages = (): CoreMessage[] => this.messages;
 
-  private getModelName = (): string => process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
-
-  private initializeModel(): LanguageModel | null {
-    const apiKey = this.getApiKey();
-    if (!apiKey) return null;
-
-    return this.provider === "anthropic" 
-      ? anthropic(this.modelName)
-      : openai(this.modelName);
-  }
-
-  private getApiKey = (): string | undefined => process.env[this.provider === "anthropic" 
-    ? "ANTHROPIC_API_KEY"
-     : "OPENAI_API_KEY"
-  ] as string | undefined;
-
-
-  private getTools = (): ToolSet => createTools({ window: this.window });
-
-  private logInitializationStatus(): void {
-    if (this.model) {
-      log.info(
-        { provider: this.provider, model: this.modelName },
-        "LLM client initialized",
-      );
-    } else {
-      const keyName =
-        this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-      log.error(
-        { provider: this.provider, keyName },
-        "LLM client initialization failed: API key not found",
-      );
-    }
-  }
-
-  async sendChatMessage(request: ChatRequest): Promise<void> {
-    try {
-      let screenshot: string | null = null;
-      if (this.window) {
-        const activeTab = this.window.activeTab;
-        if (activeTab) {
-          try {
-            const image = await activeTab.screenshot();
-            screenshot = image.toDataURL();
-          } catch (error) {
-            log.error({ err: error }, "Failed to capture screenshot");
-          }
-        }
-      }
-
-      const userContent: Array<
-        | { type: "text"; text: string }
-        | { type: "image"; image: string }
-      > = [];
-
-      if (screenshot) {
-        userContent.push({
-          type: "image",
-          image: screenshot,
-        });
-      }
-
-      userContent.push({
-        type: "text",
-        text: request.message,
-      });
-
-      const userMessage: CoreMessage = {
-        role: "user",
-        content: userContent.length === 1 ? request.message : userContent,
-      };
-
-      this.messages.push(userMessage);
-      this.sendMessagesToRenderer();
-
-      if (!this.model) {
-        this.sendErrorMessage(
-          request.messageId,
-          "LLM service is not configured. Please add your API key to the .env file."
-        );
-        return;
-      }
-
-      const { messages, system } = await this.prepareMessagesWithContext();
-      await this.streamResponse(messages, system, request.messageId);
-    } catch (error) {
-      log.error({ err: error }, "Error in LLM request");
-      this.handleStreamError(error, request.messageId);
-    }
+  get languageModel(): LanguageModel | null {
+    return this.backend.languageModel;
   }
 
   clearMessages(): void {
     this.messages = [];
-    this.sendMessagesToRenderer();
+    this.sync();
   }
 
-  getMessages = (): CoreMessage[] => this.messages;
-
-  get languageModel(): LanguageModel | null {
-    return this.model;
+  async sendChatMessage(request: ChatRequest): Promise<void> {
+    const ctx = this.createContext(request.messageId);
+    try {
+      const userMessage = await this.backend.prepareUserMessage(request.message, ctx);
+      this.messages.push(userMessage);
+      this.sync();
+      await this.backend.runTurn(request.message, ctx);
+    } catch (error) {
+      log.error({ err: error }, "Error in LLM request");
+      const message = await this.backend.formatError(error);
+      this.emit(request.messageId, { content: message, isComplete: true });
+    }
   }
 
-  private sendMessagesToRenderer(): void {
+  private createContext(messageId: string): BackendContext {
+    const sync = () => this.sync();
+    const getMessages = () => this.messages;
+    return {
+      window: this.window,
+      conversation: {
+        get messages() { return getMessages(); },
+        push: (msg) => { this.messages.push(msg); sync(); },
+        splice: (s, d, ...items) => { this.messages.splice(s, d, ...items); sync(); },
+        setAt: (i, msg) => { this.messages[i] = msg; sync(); },
+        sync,
+      },
+      emit: (chunk) => this.emit(messageId, chunk),
+      captureScreenshot: () => this.captureScreenshot(),
+    };
+  }
+
+  private async captureScreenshot(): Promise<string | null> {
+    if (!this.window?.activeTab) return null;
+    try {
+      const image = await this.window.activeTab.screenshot();
+      return this.compressScreenshot(image);
+    } catch (error) {
+      log.error({ err: error }, "Failed to capture screenshot");
+      return null;
+    }
+  }
+
+  /** Large PNGs in chat history cause Ollama VL models to collapse into gibberish. + TOken saving */
+  private compressScreenshot(image: NativeImage): string {
+    const { width } = image.getSize();
+    const resized = width > SCREENSHOT_MAX_WIDTH
+      ? image.resize({ width: SCREENSHOT_MAX_WIDTH })
+      : image;
+    return `data:image/jpeg;base64,${resized.toJPEG(72).toString("base64")}`;
+  }
+
+  private sync(): void {
     this.webContents.send("chat-messages-updated", this.messages);
   }
 
-  private async prepareMessagesWithContext(): Promise<{
-    messages: CoreMessage[];
-    system: string;
-  }> {
-    let pageUrl: string | null = null;
-
-    if (this.window) {
-      const activeTab = this.window.activeTab;
-      if (activeTab) {
-        pageUrl = activeTab.url;
-      }
-    }
-
-    return {
-      messages: this.messages,
-      system: this.buildSystemPrompt(pageUrl),
-    };
-  }
-
-  private buildSystemPrompt = (url: string | null): string => {
-    const parts = [
-      "You are a helpful AI assistant integrated into a web browser.",
-      "You can analyze and discuss web pages with the user.",
-      "The user's messages may include a screenshot of the current page as the first image.",
-      "You have tools to read page text/HTML, get the current URL, and navigate the active tab.",
-      "Use tools when you need up-to-date page content instead of guessing.",
-    ];
-
-    if (url) {
-      parts.push(`\nCurrent page URL: ${url}`);
-    }
-
-    parts.push(
-      "\nProvide helpful, accurate, and contextual responses about the current webpage.",
-      "If the user asks about specific content, use your tools to inspect the page when needed."
-    );
-
-    return parts.join("\n") as string;
-  }
-
-  private async streamResponse(
-    messages: CoreMessage[],
-    system: string,
-    messageId: string
-  ): Promise<void> {
-    if (!this.model) {
-      throw new Error("Model not initialized");
-    }
-
-    const tools = this.getTools();
-
-    const result = streamText({
-      model: this.model,
-      system,
-      messages,
-      tools,
-      stopWhen: stepCountIs(MAX_TOOL_STEPS),
-      temperature: DEFAULT_TEMPERATURE,
-      maxRetries: 3,
-    });
-
-    await this.processStream(result, messageId);
-  }
-
-  private async processStream(
-    result: StreamTextResult<ToolSet, never>,
-    messageId: string
-  ): Promise<void> {
-    const assistantMessage: CoreMessage = {
-      role: "assistant",
-      content: "",
-    };
-
-    const messageIndex = this.messages.length;
-    this.messages.push(assistantMessage);
-
-    let accumulatedText = "";
-
-    for await (const chunk of result.textStream) {
-      accumulatedText += chunk;
-
-      this.messages[messageIndex] = {
-        role: "assistant",
-        content: accumulatedText,
-      };
-      this.sendMessagesToRenderer();
-
-      this.sendStreamChunk(messageId, {
-        content: chunk,
-        isComplete: false,
-      });
-    }
-
-    const steps = await result.steps;
-    this.applyStepMessagesToHistory(steps, messageIndex);
-
-    const finalText = await result.text;
-
-    this.sendStreamChunk(messageId, {
-      content: finalText,
-      isComplete: true,
-    });
-  }
-
-  private applyStepMessagesToHistory(
-    steps: Array<StepResult<ToolSet>>,
-    placeholderIndex: number
-  ): void {
-    const turnMessages: CoreMessage[] = [];
-
-    for (const step of steps) {
-      for (const message of step.response.messages) {
-        turnMessages.push(message as CoreMessage);
-      }
-    }
-
-    if (turnMessages.length === 0) {
-      return;
-    }
-
-    this.messages.splice(placeholderIndex, 1, ...turnMessages);
-    this.sendMessagesToRenderer();
-  }
-
-  private handleStreamError(error: unknown, messageId: string): void {
-    log.error({ err: error }, "Error streaming from LLM");
-
-    const errorMessage = this.getErrorMessage(error);
-    this.sendErrorMessage(messageId, errorMessage);
-  }
-
-  private getErrorMessage(error: unknown): string {
-    if (!(error instanceof Error)) {
-      return "An unexpected error occurred. Please try again.";
-    }
-
-    const message = error.message.toLowerCase();
-
-    if (message.includes("401") || message.includes("unauthorized")) {
-      return "Authentication error: Please check your API key in the .env file.";
-    }
-
-    if (message.includes("429") || message.includes("rate limit")) {
-      return "Rate limit exceeded. Please try again in a few moments.";
-    }
-
-    if (
-      message.includes("network") ||
-      message.includes("fetch") ||
-      message.includes("econnrefused")
-    ) {
-      return "Network error: Please check your internet connection.";
-    }
-
-    if (message.includes("timeout")) {
-      return "Request timeout: The service took too long to respond. Please try again.";
-    }
-
-    return "Sorry, I encountered an error while processing your request. Please try again.";
-  }
-
-  private sendErrorMessage(messageId: string, errorMessage: string): void {
-    this.sendStreamChunk(messageId, {
-      content: errorMessage,
-      isComplete: true,
-    });
-  }
-
-  private sendStreamChunk(messageId: string, chunk: StreamChunk): void {
+  private emit(messageId: string, chunk: StreamChunk): void {
     this.webContents.send("chat-response", {
       messageId,
       content: chunk.content,

@@ -1,5 +1,9 @@
-import { NativeImage, WebContentsView, ipcMain, IpcMainEvent } from "electron";
+import { NativeImage, WebContents, WebContentsView, ipcMain, IpcMainEvent } from "electron";
 import { join } from "path";
+import {
+  FARA_REFERENCE_HEIGHT,
+  FARA_REFERENCE_WIDTH,
+} from "./llm/fara";
 import {
   createTabEvent,
   isSensitiveInputMeta,
@@ -183,29 +187,14 @@ export class Tab {
   }
 
   // Getters
-  get id(): string {
-    return this._id;
-  }
+  get id(): string { return this._id; }
 
-  get title(): string {
-    return this._title;
-  }
+  get title(): string { return this._title; }
 
-  get url(): string {
-    return this._url;
-  }
-
-  get isVisible(): boolean {
-    return this._isVisible;
-  }
-
-  get webContents() {
-    return this.webContentsView.webContents;
-  }
-
-  get view(): WebContentsView {
-    return this.webContentsView;
-  }
+  get url(): string { return this._url; }
+  get isVisible(): boolean { return this._isVisible; }
+  get webContents(): WebContents { return this.webContentsView.webContents; }
+  get view(): WebContentsView { return this.webContentsView; }
 
   // Public methods
   show(): void {
@@ -220,6 +209,112 @@ export class Tab {
 
   async screenshot(): Promise<NativeImage> {
     return await this.webContentsView.webContents.capturePage();
+  }
+
+  async getViewportSize(): Promise<{ width: number; height: number }> {
+    const size = await this.runJs(`(() => ({
+      width: Math.max(document.documentElement?.clientWidth ?? 0, window.innerWidth ?? 0),
+      height: Math.max(document.documentElement?.clientHeight ?? 0, window.innerHeight ?? 0),
+    }))()`);
+    if (
+      size &&
+      typeof size.width === "number" &&
+      typeof size.height === "number" &&
+      size.width > 0 &&
+      size.height > 0
+    ) {
+      return { width: size.width, height: size.height };
+    }
+    return { width: FARA_REFERENCE_WIDTH, height: FARA_REFERENCE_HEIGHT };
+  }
+
+  private async scaleFromFaraSpace(x: number, y: number): Promise<{ x: number; y: number }> {
+    const { width, height } = await this.getViewportSize();
+    return {
+      x: Math.round((x * width) / FARA_REFERENCE_WIDTH),
+      y: Math.round((y * height) / FARA_REFERENCE_HEIGHT),
+    };
+  }
+
+  private get webContentsForInput(): WebContents {
+    return this.webContentsView.webContents;
+  }
+
+  async mouseMove(faraX: number, faraY: number): Promise<void> {
+    const { x, y } = await this.scaleFromFaraSpace(faraX, faraY);
+    this.webContentsForInput.sendInputEvent({ type: "mouseMove", x, y });
+  }
+
+  async leftClick(faraX?: number, faraY?: number): Promise<void> {
+    let x = 0;
+    let y = 0;
+    if (faraX !== undefined && faraY !== undefined) {
+      const scaled = await this.scaleFromFaraSpace(faraX, faraY);
+      x = scaled.x;
+      y = scaled.y;
+      this.webContentsForInput.sendInputEvent({ type: "mouseMove", x, y });
+      await this.focusAtViewportPoint(x, y);
+    }
+    this.webContentsForInput.sendInputEvent({
+      type: "mouseDown",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+    this.webContentsForInput.sendInputEvent({
+      type: "mouseUp",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+  }
+
+  async typeText(text: string, faraX?: number, faraY?: number): Promise<void> {
+    if (faraX !== undefined && faraY !== undefined) {
+      await this.leftClick(faraX, faraY);
+    }
+    this.webContentsForInput.insertText(text);
+  }
+
+  async scroll(pixels: number): Promise<void> {
+    const { width, height } = await this.getViewportSize();
+    const x = Math.round(width / 2);
+    const y = Math.round(height / 2);
+    this.webContentsForInput.sendInputEvent({ type: "mouseMove", x, y });
+    this.webContentsForInput.sendInputEvent({
+      type: "mouseWheel",
+      x,
+      y,
+      deltaX: 0,
+      deltaY: pixels,
+    });
+  }
+
+  async pressKeys(keys: string[]): Promise<void> {
+    for (const key of keys) {
+      const keyCode = mapDomKeyToElectron(key);
+      this.webContentsForInput.sendInputEvent({ type: "keyDown", keyCode });
+    }
+    for (const key of [...keys].reverse()) {
+      const keyCode = mapDomKeyToElectron(key);
+      this.webContentsForInput.sendInputEvent({ type: "keyUp", keyCode });
+    }
+  }
+
+  async waitForSettle(ms: number): Promise<void> {
+    await this.waitForPageReady();
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async focusAtViewportPoint(x: number, y: number): Promise<void> {
+    await this.runJs(
+      `(() => {
+        const el = document.elementFromPoint(${x}, ${y});
+        if (el && typeof el.focus === 'function') el.focus();
+      })()`,
+    );
   }
 
   private canRunPageScript(): boolean {
@@ -304,3 +399,24 @@ export class Tab {
     this.webContentsView.webContents.close();
   }
 }
+
+const DOM_KEY_TO_ELECTRON: Record<string, string> = {
+  Enter: "Return",
+  Return: "Return",
+  Tab: "Tab",
+  Escape: "Escape",
+  Backspace: "Backspace",
+  Delete: "Delete",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  PageUp: "PageUp",
+  PageDown: "PageDown",
+  Control: "Control",
+  Alt: "Alt",
+  Shift: "Shift",
+};
+
+const mapDomKeyToElectron = (key: string): string =>
+  DOM_KEY_TO_ELECTRON[key] ?? key;

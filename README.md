@@ -80,6 +80,44 @@ $ bun install
 $ bun dev
 ```
 
-**Add an OpenAI API key to `.env`** in the root folder.
+**Add an OpenAI API key to `.env`** in the root folder (see `.env.example`).
 
 Strawberry will reimburse LLM costs, so go crazy! *(Please not more than a few hundred dollars though!)*
+
+### Microsoft Fara-7B (local computer-use agent)
+
+Set `LLM_PROVIDER=fara` in `.env`. Blueberry talks to an **OpenAI-compatible** server at `/v1/chat/completions` (vLLM, Ollama, or LM Studio).
+
+#### Option A — ~8–12GB VRAM (recommended): Ollama
+
+```bash
+ollama pull maternion/fara:7b   # Q4_K_M, ~6GB
+ollama serve
+```
+
+```env
+LLM_PROVIDER=fara
+LLM_BACKEND=ollama
+LLM_BASE_URL=http://127.0.0.1:11434/v1
+LLM_MODEL=maternion/fara:7b
+```
+
+In Ollama, set context length to **≥15000** and temperature **0** if your client exposes those settings.
+
+#### Option B — 16GB+ VRAM: vLLM (reduced memory)
+
+```bash
+pip install "vllm>=0.10.0"
+vllm serve "microsoft/Fara-7B" --port 5000 --dtype half --max-model-len 4096 --gpu-memory-utilization 0.85
+```
+
+```env
+LLM_PROVIDER=fara
+LLM_BACKEND=vllm
+LLM_BASE_URL=http://127.0.0.1:5000/v1
+LLM_MODEL=microsoft/Fara-7B
+```
+
+If you still OOM, try `--tensor-parallel-size 2` (multi-GPU) or switch to Option A (GGUF via Ollama).
+
+The sidebar agent uses the `computer_use` tool. **On Ollama (low VRAM)** it uses Ollama's native JSON mode and text-only browser state (URL/title/action results) instead of screenshots or OpenAI tool schemas, because Q4 Fara often collapses into gibberish with vision + tool payloads. vLLM keeps the fuller screenshot-based Fara loop.

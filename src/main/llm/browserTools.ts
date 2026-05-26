@@ -1,30 +1,10 @@
 import { z } from "zod";
-import { defineTool, registerTools, type ToolContext } from "./tool";
-import type { Window } from "../Window";
+import { defineTool, registerTools, withActiveTab } from "./tool";
 
 const MAX_PAGE_CONTENT_LENGTH = 4000;
 
-type ActiveTab = NonNullable<Window["activeTab"]>;
-
 const truncate = (text: string, maxLength: number): string =>
   text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
-
-const withActiveTab = async <T extends Record<string, unknown>>(
-  ctx: ToolContext,
-  fn: (tab: ActiveTab) => Promise<T>,
-  errorKey: keyof T
-): Promise<T> => {
-  const tab = ctx.window?.activeTab;
-  if (!tab) return { [errorKey]: null, error: "No active tab" } as unknown as T;
-  try {
-    return await fn(tab);
-  } catch (error) {
-    return {
-      [errorKey]: null,
-      error: error instanceof Error ? error.message : "Operation failed",
-    } as unknown as T;
-  }
-};
 
 const maxLengthSchema = z.object({
   maxLength: z
