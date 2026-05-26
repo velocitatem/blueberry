@@ -6,12 +6,15 @@ import { EventRegistry } from "./ipc/EventRegistry";
 import { registerWindowEvents } from "./ipc/registerWindowEvents";
 import { createKafkaEventPublisher } from "./kafka";
 import { createLogger } from "./logger";
+import { EventTail, composeSinks } from "./eventTail";
 
 const log = createLogger("app");
 
 let mainWindow: Window | null = null;
 let menu: AppMenu | null = null;
 const kafkaEventPublisher = createKafkaEventPublisher();
+const eventTail = new EventTail();
+const eventSink = composeSinks(kafkaEventPublisher.publish, eventTail.sink);
 
 /** App-wide IPC registry; tracks channels this app registered for safe teardown. */
 export let appEventRegistry: EventRegistry | null = null;
@@ -19,13 +22,12 @@ export let appEventRegistry: EventRegistry | null = null;
 const createWindow = (): Window => {
   appEventRegistry?.cleanup();
 
-  appEventRegistry =
-    appEventRegistry ?? new EventRegistry(kafkaEventPublisher.publish);
+  appEventRegistry = appEventRegistry ?? new EventRegistry(eventSink);
   // lets us extensably in the future manage new tabs and windows
 
-  const window = new Window();
+  const window = new Window(eventSink);
   menu = new AppMenu(window);
-  registerWindowEvents(appEventRegistry, window);
+  registerWindowEvents(appEventRegistry, window, eventTail);
   return window;
 };
 

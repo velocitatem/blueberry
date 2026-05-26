@@ -1,11 +1,13 @@
 import { randomUUID } from "crypto";
 
-export type AppEventStatus = "completed" | "failed" | "received";
+export type AppEventStatus = "completed" | "failed" | "received" | "observed";
+
+export type AppEventSource = "ipc" | "tab";
 
 export type AppEvent = {
   id: string;
   type: string;
-  source: "ipc";
+  source: AppEventSource;
   channel: string;
   status: AppEventStatus;
   timestamp: string;
@@ -71,6 +73,61 @@ const toEventValue = (
 
   return String(value);
 };
+
+export type TabEventKind =
+  | "navigation"
+  | "click"
+  | "input"
+  | "extract";
+
+type TabEventInput = {
+  kind: TabEventKind;
+  tabId: string;
+  url: string;
+  title: string;
+  data?: Record<string, unknown>;
+};
+
+const SENSITIVE_INPUT_TYPES = new Set([
+  "password",
+  "credit-card",
+  "cc-number",
+  "cc-csc",
+  "ssn",
+]);
+
+const SENSITIVE_NAME_PATTERN = /pass(word)?|secret|token|otp|cvv|ccv|card|ssn/i;
+
+export const isSensitiveInputMeta = (data: Record<string, unknown>): boolean => {
+  const type = typeof data.type === "string" ? data.type.toLowerCase() : "";
+  const name = typeof data.name === "string" ? data.name : "";
+  const autocomplete =
+    typeof data.autocomplete === "string" ? data.autocomplete.toLowerCase() : "";
+  if (type && SENSITIVE_INPUT_TYPES.has(type)) return true;
+  if (autocomplete && SENSITIVE_INPUT_TYPES.has(autocomplete)) return true;
+  if (name && SENSITIVE_NAME_PATTERN.test(name)) return true;
+  return false;
+};
+
+export const createTabEvent = ({
+  kind,
+  tabId,
+  url,
+  title,
+  data,
+}: TabEventInput): AppEvent => ({
+  id: randomUUID(),
+  type: `tab.${kind}`,
+  source: "tab",
+  channel: tabId,
+  status: "observed",
+  timestamp: new Date().toISOString(),
+  payload: {
+    url,
+    title,
+    ...(data ? { data: toEventValue(data) as Record<string, unknown> } : {}),
+  },
+});
 
 export const createIpcEvent = ({
   channel,

@@ -1,4 +1,16 @@
-import { NativeImage, WebContentsView } from "electron";
+import { NativeImage, WebContentsView, ipcMain, IpcMainEvent } from "electron";
+import { join } from "path";
+import {
+  createTabEvent,
+  isSensitiveInputMeta,
+  type EventSink,
+  type TabEventKind,
+} from "./events";
+import { createLogger } from "./logger";
+
+const log = createLogger("tab");
+
+const CAPTURE_CHANNEL = "tab-action";
 
 export class Tab {
   private webContentsView: WebContentsView;
@@ -6,15 +18,30 @@ export class Tab {
   private _title: string;
   private _url: string;
   private _isVisible: boolean = false;
+  private readonly eventSink: EventSink | null;
+  private readonly captureListener: (
+    event: IpcMainEvent,
+    payload: unknown,
+  ) => void;
 
-  constructor(id: string, url: string = "https://strawberrybrowser.com") {
+  constructor(
+    id: string,
+    url: string = "https://strawberrybrowser.com",
+    eventSink: EventSink | null = null,
+  ) {
     this._id = id;
     this._url = url;
     this._title = "Strawberry Browser";
+    this.eventSink = eventSink;
+    this.captureListener = (event, payload) => {
+      if (event.sender !== this.webContentsView.webContents) return;
+      this.handleCapturedAction(payload);
+    };
 
     // Create the WebContentsView for web content only
     this.webContentsView = new WebContentsView({
       webPreferences: {
+        preload: join(__dirname, "../preload/tab.js"),
         nodeIntegration: false,
         contextIsolation: true,
         // sandbox must be false for executeJavaScript (page text extraction)
@@ -39,11 +66,120 @@ export class Tab {
     // Update URL when navigation occurs
     this.webContentsView.webContents.on("did-navigate", (_, url) => {
       this._url = url;
+      this.emitTabEvent("navigation", { transition: "did-navigate" });
     });
 
     this.webContentsView.webContents.on("did-navigate-in-page", (_, url) => {
       this._url = url;
+      this.emitTabEvent("navigation", { transition: "did-navigate-in-page" });
     });
+
+    this.webContentsView.webContents.on("dom-ready", () => {
+      void this.injectCaptureBridge();
+    });
+
+    ipcMain.on(CAPTURE_CHANNEL, this.captureListener);
+  }
+
+  private emitTabEvent(
+    kind: TabEventKind,
+    data?: Record<string, unknown>,
+  ): void {
+    if (!this.eventSink) return;
+    try {
+      const event = createTabEvent({
+        kind,
+        tabId: this._id,
+        url: this._url,
+        title: this._title,
+        data,
+      });
+      void Promise.resolve(this.eventSink(event)).catch(() => undefined);
+    } catch (error) {
+      log.error({ err: error, tabId: this._id }, "Failed to emit tab event");
+    }
+  }
+
+  private handleCapturedAction(payload: unknown): void {
+    if (!payload || typeof payload !== "object") return;
+    const { kind, data } = payload as {
+      kind?: string;
+      data?: Record<string, unknown>;
+    };
+    if (kind !== "click" && kind !== "input") return;
+
+    if (kind === "input" && data) {
+      if (isSensitiveInputMeta(data)) return;
+      // Strip value, keep only presence + length
+      const { value, ...rest } = data as Record<string, unknown>;
+      const valueLength = typeof value === "string" ? value.length : undefined;
+      this.emitTabEvent("input", {
+        ...rest,
+        hasValue: Boolean(value),
+        ...(valueLength !== undefined ? { valueLength } : {}),
+      });
+      return;
+    }
+
+    this.emitTabEvent(kind, data);
+  }
+
+  private async injectCaptureBridge(): Promise<void> {
+    if (!this.canRunPageScript()) return;
+    const channel = JSON.stringify(CAPTURE_CHANNEL);
+    const script = `(() => {
+      if (window.__blueberryCaptureInstalled) return;
+      window.__blueberryCaptureInstalled = true;
+      const send = (kind, data) => {
+        try {
+          window.__blueberryBridge?.send(${channel}, { kind, data });
+        } catch (_) {}
+      };
+      const describe = (el) => {
+        if (!el || el.nodeType !== 1) return null;
+        const rect = el.getBoundingClientRect?.();
+        return {
+          tag: el.tagName?.toLowerCase?.() ?? null,
+          id: el.id || null,
+          name: el.getAttribute?.('name') || null,
+          role: el.getAttribute?.('role') || null,
+          type: el.getAttribute?.('type') || null,
+          text: (el.innerText || el.value || '').slice(0, 120) || null,
+          href: el.getAttribute?.('href') || null,
+          x: rect ? Math.round(rect.x) : null,
+          y: rect ? Math.round(rect.y) : null,
+        };
+      };
+      document.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!(target instanceof Element)) return;
+        const clickable = target.closest('a, button, [role=button], input[type=submit], input[type=button]') || target;
+        send('click', describe(clickable));
+      }, true);
+      const onInput = (e) => {
+        const el = e.target;
+        if (!(el instanceof Element)) return;
+        const tag = el.tagName?.toLowerCase?.();
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') return;
+        send('input', {
+          tag,
+          name: el.getAttribute('name') || null,
+          id: el.id || null,
+          type: el.getAttribute('type') || null,
+          autocomplete: el.getAttribute('autocomplete') || null,
+          value: typeof el.value === 'string' ? el.value : '',
+        });
+      };
+      document.addEventListener('change', onInput, true);
+    })();`;
+    try {
+      await this.webContentsView.webContents.executeJavaScript(script, true);
+    } catch (error) {
+      log.debug(
+        { err: error, tabId: this._id },
+        "Capture bridge injection skipped",
+      );
+    }
   }
 
   // Getters
@@ -164,6 +300,7 @@ export class Tab {
   }
 
   destroy(): void {
+    ipcMain.off(CAPTURE_CHANNEL, this.captureListener);
     this.webContentsView.webContents.close();
   }
 }

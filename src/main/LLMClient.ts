@@ -165,6 +165,10 @@ export class LLMClient {
 
   getMessages = (): CoreMessage[] => this.messages;
 
+  get languageModel(): LanguageModel | null {
+    return this.model;
+  }
+
   private sendMessagesToRenderer(): void {
     this.webContents.send("chat-messages-updated", this.messages);
   }

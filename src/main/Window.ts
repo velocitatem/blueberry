@@ -2,6 +2,7 @@ import { BaseWindow, shell } from "electron";
 import { Tab } from "./Tab";
 import { TopBar } from "./TopBar";
 import { SideBar } from "./SideBar";
+import type { EventSink } from "./events";
 
 export class Window {
   private _baseWindow: BaseWindow;
@@ -10,8 +11,10 @@ export class Window {
   private tabCounter: number = 0;
   private _topBar: TopBar;
   private _sideBar: SideBar;
+  private readonly eventSink: EventSink;
 
-  constructor() {
+  constructor(eventSink: EventSink) {
+    this.eventSink = eventSink;
     // Create the browser window.
     this._baseWindow = new BaseWindow({
       width: 1000,
@@ -91,7 +94,7 @@ export class Window {
   // Tab management methods
   createTab(url?: string): Tab {
     const tabId = `tab-${++this.tabCounter}`;
-    const tab = new Tab(tabId, url);
+    const tab = new Tab(tabId, url, this.eventSink);
 
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);

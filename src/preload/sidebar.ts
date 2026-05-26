@@ -52,6 +52,16 @@ const sidebarAPI = {
 
   // Tab information
   getActiveTabInfo: () => electronAPI.ipcRenderer.invoke("get-active-tab-info"),
+
+  // Workflow / session compiler
+  getSessionSummary: () =>
+    electronAPI.ipcRenderer.invoke("workflow-session-summary"),
+  getSessionEvents: () =>
+    electronAPI.ipcRenderer.invoke("workflow-session-events"),
+  compileWorkflow: () =>
+    electronAPI.ipcRenderer.invoke("workflow-compile"),
+  clearSession: () =>
+    electronAPI.ipcRenderer.invoke("workflow-clear-session"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to
