@@ -91,16 +91,32 @@ const buildSystemPrompt = (url: string | null, title: string | null): string => 
   sections.push(
     [
       "<tools>",
-      "You have tools to inspect and control the active tab:",
+      "You have two families of tools. Default to interacting with the page the user is already on; only navigate when you genuinely need a different URL.",
+      "",
+      "Observe (read-only, cheap):",
       "- getCurrentUrl: read the URL of the active tab.",
-      "- getPageText: read the visible text of the active page. Use this when the screenshot is insufficient or when you need to quote/search exact text.",
-      "- getPageHtml: read the HTML source. Use when you need structure or attributes not visible in plain text.",
-      "- navigateToUrl: load a URL in the active tab. This changes the page — call it last in a sequence.",
+      "- getPageText: read the visible text of the active page. Use when the screenshot is insufficient or you need to quote exact text.",
+      "- getPageHtml: read the HTML source. Use to find selectors, attributes, or structure not visible in text.",
+      "- searchPage: find a substring in the page text with surrounding context. Prefer this over getPageText when looking for something specific.",
+      "",
+      "Interact (changes page state — verify the result after each call):",
+      "- clickElement(selector): click a link, button, or control by CSS selector.",
+      "- inputText(selector, text, submit?): type into an input/textarea/contenteditable. Set submit=true for search-style fields.",
+      "- pressKey(key): send Enter/Tab/Escape/Arrow keys to the focused element.",
+      "- scrollPage({direction|selector, amount?}): scroll the window or bring an element into view.",
+      "- goBack: pop one entry from the tab's history.",
+      "- navigateToUrl(url): load a different URL. This is a heavy action — see preference rules below.",
+      "",
       "Rules:",
-      "- Prefer the screenshot and page_context for simple visual questions. Call a tool only when you actually need more or fresher data than you already have.",
+      "- Prefer the screenshot and page_context for simple visual questions. Call a tool only when you need more or fresher data.",
+      "- Strongly prefer interacting with the current page (click links, fill forms, scroll, press keys) over re-navigating. Use the screenshot to find what to click, then call clickElement / inputText.",
+      "- Use navigateToUrl only when (a) the user explicitly gave a URL, (b) no on-page link or control reaches the destination, or (c) you need a known direct URL (e.g. a search engine) to start a task. Do NOT re-navigate to the current URL or guess URL patterns when a visible link or button would do the same thing.",
+      "- To find a selector when the screenshot isn't enough: call getPageHtml (or searchPage for nearby text) once, then act. Don't loop on reads.",
+      "- After every interact call, re-check via the next screenshot or a quick observe call before chaining more actions. The page may have changed in ways you didn't predict.",
       "- Tool outputs may be truncated; ask for a larger maxLength only when needed.",
-      "- Do not call the same tool with the same arguments repeatedly — it wastes turns and produces the same result.",
-      "- If a tool returns an error (e.g. 'No active tab'), report the limitation instead of retrying blindly.",
+      "- Do not call the same tool with the same arguments repeatedly — it wastes turns. If something fails twice, change approach or report the blocker.",
+      "- If a tool returns an error (e.g. 'No active tab', 'no_match'), report the limitation instead of retrying blindly.",
+      "- Place page-changing actions (navigateToUrl, clickElement on a link, goBack) last in any planned sequence — anything you queue after them may run on a different page than you expected.",
       "</tools>",
     ].join("\n"),
   );
@@ -299,21 +315,18 @@ export class LLMClient {
     }
 
     const steps = await result.steps;
-    this.applyStepMessagesToHistory(steps, messageIndex);
+    const responseMessages = (await result.response).messages as CoreMessage[];
+    this.replacePlaceholderWithTurn(responseMessages, messageIndex);
     this.usage.record(await result.usage);
     await this.recordSteps(steps);
 
     this.emit(messageId, { content: await result.text, isComplete: true });
   }
 
-  private applyStepMessagesToHistory(
-    steps: Array<StepResult<ToolSet>>,
+  private replacePlaceholderWithTurn(
+    turn: CoreMessage[],
     placeholderIndex: number,
   ): void {
-    const turn: CoreMessage[] = [];
-    for (const step of steps) {
-      for (const m of step.response.messages) turn.push(m as CoreMessage);
-    }
     if (turn.length === 0) return;
     this.messages.splice(placeholderIndex, 1, ...turn);
     this.sendMessagesToRenderer();

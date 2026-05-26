@@ -283,7 +283,7 @@ export interface AgentConfig {
 }
 
 export const defaultAgentConfig = (): AgentConfig => ({
-  stepLimit: Number(process.env.LLM_STEP_LIMIT) || 10,
+  stepLimit: Number(process.env.LLM_STEP_LIMIT) || 1_000_000,
   temperature: Number(process.env.LLM_TEMPERATURE) || 0.7,
   debugDir: process.env.LLM_DEBUG_DIR || null,
   attachScreenshot: process.env.LLM_ATTACH_SCREENSHOT !== "0",
