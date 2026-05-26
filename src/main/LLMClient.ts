@@ -14,7 +14,7 @@ import * as dotenv from "dotenv";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import type { Window } from "./Window";
-import { createTools } from "./llm";
+import { createTools, INTERACT_TOOL_NAMES } from "./llm";
 import { createLogger } from "./logger";
 import {
   LimitsExceeded,
@@ -76,8 +76,9 @@ const buildSystemPrompt = (url: string | null, title: string | null): string => 
       "At each turn your input may include:",
       "1. The user's request — your ultimate objective. It always has the highest priority.",
       "2. A screenshot of the current page attached to the user's message. Treat it as ground truth for what the user can see.",
-      "3. Page context (current URL and title) provided below.",
-      "4. Results of any tools you previously called this turn.",
+      "3. A fresh screenshot is automatically attached after every interact tool call (click, input, scroll, navigate, etc.). Use it to verify the action's effect before deciding the next step.",
+      "4. Page context (current URL and title) provided below.",
+      "5. Results of any tools you previously called this turn.",
       "</input>",
     ].join("\n"),
   );
@@ -292,6 +293,34 @@ export class LLMClient {
           stopWhen: stepCountIs(remaining),
           temperature: this.config.temperature,
           maxRetries: 3,
+          prepareStep: this.config.attachScreenshot
+            ? async ({ steps, messages }) => {
+                const last = steps[steps.length - 1];
+                if (!last) return undefined;
+                const usedInteract = (last.toolCalls ?? []).some((c) =>
+                  INTERACT_TOOL_NAMES.has((c as { toolName: string }).toolName),
+                );
+                if (!usedInteract) return undefined;
+                await new Promise((r) => setTimeout(r, 250));
+                const shot = await this.captureScreenshot();
+                if (!shot) return undefined;
+                return {
+                  messages: [
+                    ...messages,
+                    {
+                      role: "user",
+                      content: [
+                        { type: "image", image: shot },
+                        {
+                          type: "text",
+                          text: "Fresh screenshot after the interaction above. Verify the result before continuing.",
+                        },
+                      ],
+                    },
+                  ],
+                };
+              }
+            : undefined,
         }),
       ),
     );

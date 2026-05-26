@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { defineTool, registerTools, withActiveTab } from "./tool";
 
+export const INTERACT_TOOL_NAMES = new Set([
+  "navigateToUrl",
+  "goBack",
+  "clickElement",
+  "inputText",
+  "pressKey",
+  "scrollPage",
+]);
+
 export const interactTools = registerTools({
   navigateToUrl: defineTool({
     description: "Navigate the active tab to a URL.",
