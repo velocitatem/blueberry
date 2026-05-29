@@ -7,6 +7,7 @@ import type {
   LanguageModelUsage,
 } from "ai";
 import { createLogger } from "../logger";
+import { tracer } from "../tracer";
 
 const log = createLogger("harness");
 
@@ -83,6 +84,35 @@ export const withRetries = async <T>(
       throw err;
     }
   }
+};
+
+export interface TurnTraceOpts {
+  modelName: string;
+  modelProvider: string;
+  sessionId?: string;
+}
+
+export const withTurnTrace = <T>(
+  opts: TurnTraceOpts,
+  fn: () => Promise<T>,
+): Promise<T> => {
+  if (!tracer.llmobs?.enabled) return fn();
+
+  return tracer.llmobs.trace(
+    { kind: "agent", name: "agent.turn", modelName: opts.modelName, modelProvider: opts.modelProvider, sessionId: opts.sessionId },
+    () => fn(),
+  ) as Promise<T>;
+};
+
+export const annotateTurnUsage = (usage: UsageSnapshot): void => {
+  if (!tracer.llmobs?.enabled) return;
+  tracer.llmobs.annotate(undefined, {
+    metrics: {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens,
+    },
+  });
 };
 
 export const userFacingError = (err: unknown): string => {

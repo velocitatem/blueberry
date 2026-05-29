@@ -28,6 +28,7 @@
     "@radix-ui/react-slot": "^1.2.3",
     "ai": "^5.0.44",
     "class-variance-authority": "^0.7.1",
+    "dd-trace": "^5.104.0",
     "dotenv": "^17.2.2",
     "kafkajs": "^2.2.4",
     "lucide-react": "^0.544.0",
@@ -64,6 +65,7 @@
     "vite": "^7.0.5"
   },
   "trustedDependencies": [
+    "dd-trace",
     "electron",
     "esbuild"
   ]
