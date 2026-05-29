@@ -8,6 +8,8 @@ import { registerSidebarEvents } from "./registerSidebarEvents";
 import { registerTabEvents } from "./registerTabEvents";
 import { registerThemeEvents } from "./registerThemeEvents";
 import { registerWorkflowEvents } from "./registerWorkflowEvents";
+import { GraphStore } from "../graph/GraphStore";
+import { PacketStore } from "../TaskGraphCompiler";
 
 export const registerWindowEvents = (
   registry: EventRegistry,
@@ -15,11 +17,15 @@ export const registerWindowEvents = (
   sessionLog: SessionLog,
 ): void => {
   const ctx = new EventContext(mainWindow);
+  const graphStore = new GraphStore();
+  const packetStore = new PacketStore();
+
+  mainWindow.sidebar.client.setNightStores(graphStore, packetStore);
 
   registerTabEvents(registry, ctx);
   registerSidebarEvents(registry, ctx);
   registerPageContentEvents(registry, ctx);
   registerThemeEvents(registry, ctx);
-  registerWorkflowEvents(registry, ctx, sessionLog);
+  registerWorkflowEvents(registry, ctx, sessionLog, graphStore, packetStore);
   registerDebugEvents(registry);
 };

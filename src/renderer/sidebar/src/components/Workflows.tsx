@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Sparkles, RefreshCw, Trash2, AlertTriangle, Copy } from 'lucide-react'
+import { RefreshCw, AlertTriangle, GitBranch, Moon, Square, Sparkles } from 'lucide-react'
 import { Button } from '@common/components/Button'
 import { cn } from '@common/lib/utils'
 
@@ -9,142 +9,169 @@ interface SessionSummary {
     startedAt: string | null
 }
 
-interface CompiledWorkflow {
-    goal: string
-    steps: string[]
-    extractedEntities: string[]
-    automationPrompt: string
-    riskLevel: 'low' | 'medium' | 'high'
-    riskWarnings: string[]
-    repeatabilityScore: number
+interface GraphSummaryData {
+    pageCount: number
+    actionCount: number
+    openLoopCount: number
+    motif: string | null
+    likelyFinishAction: string | null
+    startUrl: string | null
+    lastUrl: string | null
 }
 
-const RISK_STYLES: Record<CompiledWorkflow['riskLevel'], string> = {
-    low: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-    medium: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-    high: 'bg-red-500/10 text-red-600 dark:text-red-400',
-}
-
-const SectionCard: React.FC<{ title: string; children: React.ReactNode }> = ({
-    title,
-    children,
-}) => (
-    <div className="rounded-xl border border-border bg-background dark:bg-secondary/40 p-4">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
-            {title}
-        </div>
-        {children}
+const StatPill: React.FC<{ label: string; value: number | string }> = ({ label, value }) => (
+    <div className="flex flex-col items-center px-3 py-2 rounded-lg bg-muted/60 dark:bg-muted/30 min-w-[60px]">
+        <span className="text-base font-semibold text-foreground">{value}</span>
+        <span className="text-[10px] text-muted-foreground mt-0.5">{label}</span>
     </div>
 )
 
+type Step = 'idle' | 'graph' | 'packet' | 'ready' | 'running'
+
 export const Workflows: React.FC = () => {
     const [summary, setSummary] = useState<SessionSummary | null>(null)
-    const [workflow, setWorkflow] = useState<CompiledWorkflow | null>(null)
-    const [isCompiling, setIsCompiling] = useState(false)
+    const [step, setStep] = useState<Step>('idle')
+    const [graphSummary, setGraphSummary] = useState<GraphSummaryData | null>(null)
+    const [graphId, setGraphId] = useState<string | null>(null)
+    const [packetGoal, setPacketGoal] = useState<string | null>(null)
+    const [packetId, setPacketId] = useState<string | null>(null)
+    const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
     const refreshSummary = useCallback(async () => {
         try {
             const next = await window.sidebarAPI.getSessionSummary()
             setSummary(next)
-        } catch (e) {
-            // best-effort
-        }
+        } catch { /* best-effort */ }
+    }, [])
+
+    const syncAgentMode = useCallback(async () => {
+        try {
+            const r = await window.sidebarAPI.getAgentMode()
+            if (r.mode === 'night') setStep('running')
+        } catch { /* best-effort */ }
     }, [])
 
     useEffect(() => {
         void refreshSummary()
-        const interval = setInterval(refreshSummary, 2500)
-        return () => clearInterval(interval)
-    }, [refreshSummary])
-
-    const handleCompile = async () => {
-        setIsCompiling(true)
-        setError(null)
-        try {
-            const result = await window.sidebarAPI.compileWorkflow()
-            if (result.ok) {
-                setWorkflow(result.workflow)
-            } else {
-                setError(result.error)
+        void syncAgentMode()
+        // also try to restore existing graph summary
+        void window.sidebarAPI.getGraphSummary().then((r) => {
+            if (r.ok) {
+                setGraphSummary(r.summary)
+                setGraphId(r.graphId)
+                setStep((s) => s === 'idle' ? 'graph' : s)
             }
-        } catch (e) {
-            setError(e instanceof Error ? e.message : 'Compile failed')
-        } finally {
-            setIsCompiling(false)
-        }
-    }
+        }).catch(() => {})
 
-    const handleClear = async () => {
-        await window.sidebarAPI.clearSession()
-        setWorkflow(null)
+        const interval = setInterval(() => {
+            void refreshSummary()
+        }, 3000)
+        return () => clearInterval(interval)
+    }, [refreshSummary, syncAgentMode])
+
+    const run = async (fn: () => Promise<void>) => {
+        setBusy(true)
         setError(null)
-        await refreshSummary()
+        try { await fn() } catch (e) {
+            setError(e instanceof Error ? e.message : 'Something went wrong')
+        } finally { setBusy(false) }
     }
 
-    const copyAutomationPrompt = async () => {
-        if (!workflow) return
-        try {
-            await navigator.clipboard.writeText(workflow.automationPrompt)
-        } catch {
-            // ignore
-        }
+    const handleBuildGraph = () => run(async () => {
+        const r = await window.sidebarAPI.buildGraph()
+        if (!r.ok) { setError(r.error); return }
+        setGraphSummary(r.summary)
+        setGraphId(r.graphId)
+        setPacketGoal(null)
+        setPacketId(null)
+        setStep('graph')
+    })
+
+    const handleCompilePacket = () => run(async () => {
+        const r = await window.sidebarAPI.compileTaskPacket()
+        if (!r.ok) { setError(r.error); return }
+        setPacketGoal(r.goal)
+        setPacketId(r.packetId)
+        setStep('packet')
+    })
+
+    const handleStart = () => run(async () => {
+        const r = await window.sidebarAPI.startNightAgent(packetId ?? undefined)
+        if (!r.ok) { setError(r.error); return }
+        setStep('running')
+    })
+
+    const handleStop = async () => {
+        await window.sidebarAPI.stopNightAgent()
+        setStep(packetId ? 'ready' : graphId ? 'graph' : 'idle')
     }
+
+    const eventCount = summary?.eventCount ?? 0
 
     return (
         <div className="flex flex-col h-full overflow-y-auto">
             <div className="max-w-3xl w-full mx-auto px-4 py-4 flex flex-col gap-4">
+
+                {/* Header */}
                 <div className="flex items-center justify-between">
                     <div>
-                        <h2 className="text-lg font-semibold">Night Shift Handover</h2>
+                        <h2 className="text-lg font-semibold">Night Agent</h2>
                         <p className="text-xs text-muted-foreground">
-                            Compile browsing into a reusable workflow.
+                            {eventCount} events · {summary?.uniqueUrls ?? 0} pages observed
                         </p>
                     </div>
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={refreshSummary}
-                        title="Refresh"
-                    >
+                    <Button variant="ghost" size="icon" onClick={refreshSummary} title="Refresh">
                         <RefreshCw className="size-4" />
                     </Button>
                 </div>
 
-                <SectionCard title="Observed session">
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm text-foreground">
-                            <span className="font-medium">
-                                {summary?.eventCount ?? 0}
-                            </span>{' '}
-                            events ·{' '}
-                            <span className="font-medium">
-                                {summary?.uniqueUrls ?? 0}
-                            </span>{' '}
-                            pages
+                {/* Active banner */}
+                {step === 'running' && (
+                    <div className="rounded-xl border border-violet-500/40 bg-violet-500/10 p-3 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-sm text-violet-600 dark:text-violet-400">
+                            <Moon className="size-4" />
+                            <span className="font-medium">Night Agent running</span>
+                            {packetGoal && (
+                                <span className="text-xs opacity-70 truncate max-w-[160px]">{packetGoal}</span>
+                            )}
                         </div>
-                        <div className="flex gap-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={handleClear}
-                                title="Clear session"
-                            >
-                                <Trash2 className="size-3.5" />
-                                Clear
-                            </Button>
-                            <Button
-                                size="sm"
-                                onClick={handleCompile}
-                                disabled={isCompiling || (summary?.eventCount ?? 0) === 0}
-                            >
-                                <Sparkles className="size-3.5" />
-                                {isCompiling ? 'Compiling…' : 'Compile Session'}
-                            </Button>
-                        </div>
+                        <Button variant="outline" size="sm" onClick={handleStop}>
+                            <Square className="size-3.5" />
+                            Stop
+                        </Button>
                     </div>
-                </SectionCard>
+                )}
 
+                {/* Graph summary */}
+                {graphSummary && (
+                    <div className="rounded-xl border border-border bg-background dark:bg-secondary/40 p-4 flex flex-col gap-3">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">Behavior graph</div>
+                        <div className="flex gap-2 flex-wrap">
+                            <StatPill label="pages" value={graphSummary.pageCount} />
+                            <StatPill label="actions" value={graphSummary.actionCount} />
+                            <StatPill label="open loops" value={graphSummary.openLoopCount} />
+                            {graphSummary.motif && (
+                                <StatPill label="motif" value={graphSummary.motif.replace('_', ' ')} />
+                            )}
+                        </div>
+                        {graphSummary.likelyFinishAction && (
+                            <p className="text-xs text-muted-foreground truncate">
+                                Finish: {graphSummary.likelyFinishAction}
+                            </p>
+                        )}
+                    </div>
+                )}
+
+                {/* Goal pill */}
+                {packetGoal && (
+                    <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-foreground">
+                        <span className="text-muted-foreground font-medium">Goal · </span>
+                        {packetGoal}
+                    </div>
+                )}
+
+                {/* Error */}
                 {error && (
                     <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400 flex items-start gap-2">
                         <AlertTriangle className="size-4 mt-0.5 shrink-0" />
@@ -152,81 +179,42 @@ export const Workflows: React.FC = () => {
                     </div>
                 )}
 
-                {workflow && (
-                    <>
-                        <SectionCard title="Inferred goal">
-                            <div className="text-sm text-foreground">{workflow.goal}</div>
-                            <div className="mt-2 flex items-center gap-2">
-                                <span
-                                    className={cn(
-                                        'text-xs px-2 py-0.5 rounded-full font-medium',
-                                        RISK_STYLES[workflow.riskLevel]
-                                    )}
-                                >
-                                    risk: {workflow.riskLevel}
-                                </span>
-                                <span className="text-xs text-muted-foreground">
-                                    repeatability:{' '}
-                                    {(workflow.repeatabilityScore * 100).toFixed(0)}%
-                                </span>
-                            </div>
-                        </SectionCard>
-
-                        <SectionCard title="Reusable steps">
-                            <ol className="list-decimal pl-5 space-y-1 text-sm text-foreground">
-                                {workflow.steps.map((step, i) => (
-                                    <li key={i}>{step}</li>
-                                ))}
-                            </ol>
-                        </SectionCard>
-
-                        {workflow.extractedEntities.length > 0 && (
-                            <SectionCard title="Data extracted">
-                                <div className="flex flex-wrap gap-1.5">
-                                    {workflow.extractedEntities.map((e, i) => (
-                                        <span
-                                            key={i}
-                                            className="text-xs px-2 py-0.5 rounded-full bg-muted text-foreground"
-                                        >
-                                            {e}
-                                        </span>
-                                    ))}
-                                </div>
-                            </SectionCard>
-                        )}
-
-                        <SectionCard title="Automation prompt">
-                            <div className="flex flex-col gap-2">
-                                <pre className="whitespace-pre-wrap text-xs bg-muted/60 dark:bg-muted/30 p-3 rounded-lg text-foreground">
-                                    {workflow.automationPrompt}
-                                </pre>
-                                <div className="flex justify-end">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={copyAutomationPrompt}
-                                    >
-                                        <Copy className="size-3.5" />
-                                        Copy
-                                    </Button>
-                                </div>
-                            </div>
-                        </SectionCard>
-
-                        {workflow.riskWarnings.length > 0 && (
-                            <SectionCard title="Risk warnings">
-                                <ul className="text-sm text-foreground space-y-1">
-                                    {workflow.riskWarnings.map((w, i) => (
-                                        <li key={i} className="flex gap-2 items-start">
-                                            <AlertTriangle className="size-4 mt-0.5 text-amber-500 shrink-0" />
-                                            <span>{w}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </SectionCard>
-                        )}
-                    </>
+                {/* Action strip — single row, advances the pipeline */}
+                {step !== 'running' && (
+                    <div className="flex gap-2">
+                        <Button
+                            variant={step === 'idle' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={handleBuildGraph}
+                            disabled={busy || eventCount === 0}
+                            className="flex-1"
+                        >
+                            <GitBranch className="size-3.5" />
+                            {busy && step === 'idle' ? 'Building…' : 'Build Graph'}
+                        </Button>
+                        <Button
+                            variant={step === 'graph' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={handleCompilePacket}
+                            disabled={busy || !graphId}
+                            className="flex-1"
+                        >
+                            <Sparkles className="size-3.5" />
+                            {busy && step === 'graph' ? 'Compiling…' : 'Compile'}
+                        </Button>
+                        <Button
+                            variant={step === 'packet' || step === 'ready' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={handleStart}
+                            disabled={busy || step === 'idle' || step === 'graph'}
+                            className={cn('flex-1', (step === 'packet' || step === 'ready') && 'bg-violet-600 hover:bg-violet-700 text-white border-violet-600')}
+                        >
+                            <Moon className="size-3.5" />
+                            {busy && (step === 'packet' || step === 'ready') ? 'Starting…' : 'Start'}
+                        </Button>
+                    </div>
                 )}
+
             </div>
         </div>
     )

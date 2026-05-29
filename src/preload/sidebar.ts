@@ -62,6 +62,20 @@ const sidebarAPI = {
     electronAPI.ipcRenderer.invoke("workflow-compile"),
   clearSession: () =>
     electronAPI.ipcRenderer.invoke("workflow-clear-session"),
+
+  // NightGraph
+  buildGraph: () =>
+    electronAPI.ipcRenderer.invoke("workflow-build-graph"),
+  getGraphSummary: () =>
+    electronAPI.ipcRenderer.invoke("workflow-get-graph-summary"),
+  compileTaskPacket: () =>
+    electronAPI.ipcRenderer.invoke("workflow-compile-task-packet"),
+  startNightAgent: (packetId?: string) =>
+    electronAPI.ipcRenderer.invoke("workflow-start-night-agent", { packetId }),
+  stopNightAgent: () =>
+    electronAPI.ipcRenderer.invoke("workflow-stop-night-agent"),
+  getAgentMode: () =>
+    electronAPI.ipcRenderer.invoke("workflow-get-agent-mode"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

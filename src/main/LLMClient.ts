@@ -14,18 +14,23 @@ import * as dotenv from "dotenv";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import type { Window } from "./Window";
-import { createTools, INTERACT_TOOL_NAMES } from "./llm";
+import { createTools, filterTools, INTERACT_TOOL_NAMES } from "./llm";
 import { createLogger } from "./logger";
 import {
   LimitsExceeded,
   StepRecorder,
   UsageTracker,
+  annotateTurnUsage,
   defaultAgentConfig,
   observationsFromStep,
   userFacingError,
   withRetries,
+  withTurnTrace,
   type AgentConfig,
 } from "./llm/harness";
+import { type AgentMode, NightAgentHarness } from "./llm/nightHarness";
+import type { GraphStore } from "./graph/GraphStore";
+import type { PacketStore } from "./TaskGraphCompiler";
 
 const log = createLogger("llm");
 
@@ -55,103 +60,80 @@ const apiKeyFor = (p: LLMProvider): string | undefined =>
   process.env[p === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"];
 
 const buildSystemPrompt = (url: string | null, title: string | null): string => {
-  const sections: string[] = [];
+  const pageContext = `
+<page_context>
+Current URL: ${url || "(no active tab)"}
+${title ? `Current page title: ${title}\n` : ""}</page_context>`.trim();
 
-  sections.push(
-    [
-      "<role>",
-      "You are an AI assistant embedded in a desktop web browser. You operate in an iterative tool-use loop to help the user accomplish tasks on the active tab.",
-      "You excel at:",
-      "1. Navigating websites and extracting precise information from the page the user is looking at.",
-      "2. Reading page content (text and HTML) to answer questions grounded in what is actually on screen.",
-      "3. Driving the active tab via tools when fresh data or a navigation is required.",
-      "4. Operating efficiently across multiple reasoning + tool steps without losing track of the goal.",
-      "</role>",
-    ].join("\n"),
-  );
+  const prompt = `
+<role>
+You are an AI assistant embedded in a desktop web browser. You operate in an iterative tool-use loop to help the user accomplish tasks on the active tab.
+You excel at:
+1. Navigating websites and extracting precise information from the page the user is looking at.
+2. Reading page content (text and HTML) to answer questions grounded in what is actually on screen.
+3. Driving the active tab via tools when fresh data or a navigation is required.
+4. Operating efficiently across multiple reasoning + tool steps without losing track of the goal.
+</role>
 
-  sections.push(
-    [
-      "<input>",
-      "At each turn your input may include:",
-      "1. The user's request — your ultimate objective. It always has the highest priority.",
-      "2. A screenshot of the current page attached to the user's message. Treat it as ground truth for what the user can see.",
-      "3. A fresh screenshot is automatically attached after every interact tool call (click, input, scroll, navigate, etc.). Use it to verify the action's effect before deciding the next step.",
-      "4. Page context (current URL and title) provided below.",
-      "5. Results of any tools you previously called this turn.",
-      "</input>",
-    ].join("\n"),
-  );
+<input>
+At each turn your input may include:
+1. The user's request — your ultimate objective. It always has the highest priority.
+2. A screenshot of the current page attached to the user's message. Treat it as ground truth for what the user can see.
+3. A fresh screenshot is automatically attached after every interact tool call (click, input, scroll, navigate, etc.). Use it to verify the action's effect before deciding the next step.
+4. Page context (current URL and title) provided below.
+5. Results of any tools you previously called this turn.
+</input>
 
-  const ctx: string[] = ["<page_context>"];
-  ctx.push(url ? `Current URL: ${url}` : "Current URL: (no active tab)");
-  if (title) ctx.push(`Current page title: ${title}`);
-  ctx.push("</page_context>");
-  sections.push(ctx.join("\n"));
+${pageContext}
 
-  sections.push(
-    [
-      "<tools>",
-      "You have two families of tools. Default to interacting with the page the user is already on; only navigate when you genuinely need a different URL.",
-      "",
-      "Observe (read-only, cheap):",
-      "- getCurrentUrl: read the URL of the active tab.",
-      "- getPageText: read the visible text of the active page. Use when the screenshot is insufficient or you need to quote exact text.",
-      "- getPageHtml: read the HTML source. Use to find selectors, attributes, or structure not visible in text.",
-      "- searchPage: find a substring in the page text with surrounding context. Prefer this over getPageText when looking for something specific.",
-      "",
-      "Interact (changes page state — verify the result after each call):",
-      "- clickElement(selector): click a link, button, or control by CSS selector.",
-      "- inputText(selector, text, submit?): type into an input/textarea/contenteditable. Set submit=true for search-style fields.",
-      "- pressKey(key): send Enter/Tab/Escape/Arrow keys to the focused element.",
-      "- scrollPage({direction|selector, amount?}): scroll the window or bring an element into view.",
-      "- goBack: pop one entry from the tab's history.",
-      "- navigateToUrl(url): load a different URL. This is a heavy action — see preference rules below.",
-      "",
-      "Rules:",
-      "- Prefer the screenshot and page_context for simple visual questions. Call a tool only when you need more or fresher data.",
-      "- Strongly prefer interacting with the current page (click links, fill forms, scroll, press keys) over re-navigating. Use the screenshot to find what to click, then call clickElement / inputText.",
-      "- Use navigateToUrl only when (a) the user explicitly gave a URL, (b) no on-page link or control reaches the destination, or (c) you need a known direct URL (e.g. a search engine) to start a task. Do NOT re-navigate to the current URL or guess URL patterns when a visible link or button would do the same thing.",
-      "- To find a selector when the screenshot isn't enough: call getPageHtml (or searchPage for nearby text) once, then act. Don't loop on reads.",
-      "- After every interact call, re-check via the next screenshot or a quick observe call before chaining more actions. The page may have changed in ways you didn't predict.",
-      "- Tool outputs may be truncated; ask for a larger maxLength only when needed.",
-      "- Do not call the same tool with the same arguments repeatedly — it wastes turns. If something fails twice, change approach or report the blocker.",
-      "- If a tool returns an error (e.g. 'No active tab', 'no_match'), report the limitation instead of retrying blindly.",
-      "- Place page-changing actions (navigateToUrl, clickElement on a link, goBack) last in any planned sequence — anything you queue after them may run on a different page than you expected.",
-      "</tools>",
-    ].join("\n"),
-  );
+<tools>
+You have two families of tools. Default to interacting with the page the user is already on; only navigate when you genuinely need a different URL.
 
-  sections.push(
-    [
-      "<reasoning>",
-      "- Before acting, briefly judge what you already know from the screenshot, page_context, and prior tool results. Only call a tool if it adds information you don't have.",
-      "- After each tool call, verify it achieved its goal before chaining more actions. Never assume an action succeeded just because you issued it.",
-      "- If you appear stuck (same action failing 2–3 times, or no progress after several steps), change strategy: try a different tool, a different query, or tell the user what is blocking you.",
-      "- Ground every claim in tool output, the screenshot, or the user's message. Do NOT invent URLs, prices, names, or values from prior knowledge — if it isn't in the page or tool results, say so.",
-      "</reasoning>",
-    ].join("\n"),
-  );
+Observe (read-only, cheap):
+- getCurrentUrl: read the URL of the active tab.
+- getPageText: read the visible text of the active page. Use when the screenshot is insufficient or you need to quote exact text.
+- getPageHtml: read the HTML source. Use to find selectors, attributes, or structure not visible in text.
+- searchPage: find a substring in the page text with surrounding context. Prefer this over getPageText when looking for something specific.
 
-  sections.push(
-    [
-      "<completion>",
-      "Before declaring a task done, re-read the user's request and check that every concrete requirement is met (correct count, correct format, all filters/criteria applied). If any part is unmet or uncertain, say so explicitly instead of overclaiming success. Partial results with honest caveats are more valuable than confident-but-wrong answers.",
-      "</completion>",
-    ].join("\n"),
-  );
+Interact (changes page state — verify the result after each call):
+- clickElement(selector): click a link, button, or control by CSS selector.
+- inputText(selector, text, submit?): type into an input/textarea/contenteditable. Set submit=true for search-style fields.
+- pressKey(key): send Enter/Tab/Escape/Arrow keys to the focused element.
+- scrollPage({direction|selector, amount?}): scroll the window or bring an element into view.
+- goBack: pop one entry from the tab's history.
+- navigateToUrl(url): load a different URL. This is a heavy action — see preference rules below.
 
-  sections.push(
-    [
-      "<style>",
-      "- Respond in the same language as the user's request (default English).",
-      "- Be concise. Don't narrate every tool call; just give the user the answer plus the evidence that supports it.",
-      "- When citing page content, quote it briefly rather than paraphrasing inexactly.",
-      "</style>",
-    ].join("\n"),
-  );
+Rules:
+- Prefer the screenshot and page_context for simple visual questions. Call a tool only when you need more or fresher data.
+- Strongly prefer interacting with the current page (click links, fill forms, scroll, press keys) over re-navigating. Use the screenshot to find what to click, then call clickElement / inputText.
+- Use navigateToUrl only when (a) the user explicitly gave a URL, (b) no on-page link or control reaches the destination, or (c) you need a known direct URL (e.g. a search engine) to start a task. Do NOT re-navigate to the current URL or guess URL patterns when a visible link or button would do the same thing.
+- To find a selector when the screenshot isn't enough: call getPageHtml (or searchPage for nearby text) once, then act. Don't loop on reads.
+- After every interact call, re-check via the next screenshot or a quick observe call before chaining more actions. The page may have changed in ways you didn't predict.
+- Tool outputs may be truncated; ask for a larger maxLength only when needed.
+- Do not call the same tool with the same arguments repeatedly — it wastes turns. If something fails twice, change approach or report the blocker.
+- If a tool returns an error (e.g. 'No active tab', 'no_match'), report the limitation instead of retrying blindly.
+- Place page-changing actions (navigateToUrl, clickElement on a link, goBack) last in any planned sequence — anything you queue after them may run on a different page than you expected.
+</tools>
 
-  return sections.join("\n\n");
+<reasoning>
+- Before acting, briefly judge what you already know from the screenshot, page_context, and prior tool results. Only call a tool if it adds information you don't have.
+- After each tool call, verify it achieved its goal before chaining more actions. Never assume an action succeeded just because you issued it.
+- If you appear stuck (same action failing 2–3 times, or no progress after several steps), change strategy: try a different tool, a different query, or tell the user what is blocking you.
+- Ground every claim in tool output, the screenshot, or the user's message. Do NOT invent URLs, prices, names, or values from prior knowledge — if it isn't in the page or tool results, say so.
+</reasoning>
+
+<completion>
+Before declaring a task done, re-read the user's request and check that every concrete requirement is met (correct count, correct format, all filters/criteria applied). If any part is unmet or uncertain, say so explicitly instead of overclaiming success. Partial results with honest caveats are more valuable than confident-but-wrong answers.
+</completion>
+
+<style>
+- Respond in the same language as the user's request (default English).
+- Be concise. Don't narrate every tool call; just give the user the answer plus the evidence that supports it.
+- When citing page content, quote it briefly rather than paraphrasing inexactly.
+</style>
+`.trim();
+
+  return prompt;
 };
 
 export class LLMClient {
@@ -165,6 +147,9 @@ export class LLMClient {
   private messages: CoreMessage[] = [];
   private stepCount = 0;
   private recorder: StepRecorder | null = null;
+  private mode: AgentMode = "normal";
+  private activePacketId: string | null = null;
+  private nightHarness: NightAgentHarness | null = null;
 
   constructor(webContents: WebContents) {
     this.webContents = webContents;
@@ -180,6 +165,20 @@ export class LLMClient {
 
   setWindow(window: Window): void {
     this.window = window;
+  }
+
+  setNightStores(graphStore: GraphStore, packetStore: PacketStore): void {
+    this.nightHarness = new NightAgentHarness(graphStore, packetStore);
+  }
+
+  setMode(mode: AgentMode, packetId?: string): void {
+    this.mode = mode;
+    this.activePacketId = packetId ?? null;
+    log.info({ mode, packetId }, "agent mode set");
+  }
+
+  getMode(): AgentMode {
+    return this.mode;
   }
 
   get languageModel(): LanguageModel | null {
@@ -283,49 +282,73 @@ export class LLMClient {
     if (remaining <= 0) throw new LimitsExceeded();
 
     const { url, title } = this.pageContext();
-    const result = await withRetries(() =>
-      Promise.resolve(
-        streamText({
-          model: this.model!,
-          system: buildSystemPrompt(url, title),
-          messages: this.messages,
-          tools: createTools({ window: this.window }),
-          stopWhen: stepCountIs(remaining),
-          temperature: this.config.temperature,
-          maxRetries: 3,
-          prepareStep: this.config.attachScreenshot
-            ? async ({ steps, messages }) => {
-                const last = steps[steps.length - 1];
-                if (!last) return undefined;
-                const usedInteract = (last.toolCalls ?? []).some((c) =>
-                  INTERACT_TOOL_NAMES.has((c as { toolName: string }).toolName),
-                );
-                if (!usedInteract) return undefined;
-                await new Promise((r) => setTimeout(r, 250));
-                const shot = await this.captureScreenshot();
-                if (!shot) return undefined;
-                return {
-                  messages: [
-                    ...messages,
-                    {
-                      role: "user",
-                      content: [
-                        { type: "image", image: shot },
+
+    let systemPrompt = buildSystemPrompt(url, title);
+    let messages = this.messages;
+    let tools = createTools({ window: this.window });
+
+    if (this.mode === "night" && this.activePacketId && this.nightHarness) {
+      const harnessCtx = this.nightHarness.buildContext({
+        packetId: this.activePacketId,
+        currentUrl: url ?? "",
+      });
+      if (harnessCtx) {
+        systemPrompt = `${systemPrompt}\n\n${harnessCtx.systemAddendum}`;
+        messages = [...harnessCtx.contextBlocks, ...this.messages];
+        tools = filterTools(tools, harnessCtx.toolPolicy);
+      }
+    }
+
+    const isReasoningModel = /^o\d/i.test(this.modelName);
+
+    await withTurnTrace(
+      { modelName: this.modelName, modelProvider: this.provider },
+      async () => {
+        const result = await withRetries(() =>
+          Promise.resolve(
+            streamText({
+              model: this.model!,
+              system: systemPrompt,
+              messages,
+              tools,
+              toolChoice: this.mode === "night" ? "required" : "auto",
+              stopWhen: stepCountIs(remaining),
+              ...(isReasoningModel ? {} : { temperature: this.config.temperature }),
+              maxRetries: 3,
+              prepareStep: this.config.attachScreenshot
+                ? async ({ steps, messages: stepMessages }) => {
+                    const last = steps[steps.length - 1];
+                    if (!last) return undefined;
+                    const usedInteract = (last.toolCalls ?? []).some((c) =>
+                      INTERACT_TOOL_NAMES.has((c as { toolName: string }).toolName),
+                    );
+                    if (!usedInteract) return undefined;
+                    await new Promise((r) => setTimeout(r, 250));
+                    const shot = await this.captureScreenshot();
+                    if (!shot) return undefined;
+                    return {
+                      messages: [
+                        ...stepMessages,
                         {
-                          type: "text",
-                          text: "Fresh screenshot after the interaction above. Verify the result before continuing.",
+                          role: "user",
+                          content: [
+                            { type: "image", image: shot },
+                            {
+                              type: "text",
+                              text: "Fresh screenshot after the interaction above. Verify the result before continuing.",
+                            },
+                          ],
                         },
                       ],
-                    },
-                  ],
-                };
-              }
-            : undefined,
-        }),
-      ),
+                    };
+                  }
+                : undefined,
+            }),
+          ),
+        );
+        await this.processStream(result, messageId);
+      },
     );
-
-    await this.processStream(result, messageId);
   }
 
   private async processStream(
@@ -347,6 +370,7 @@ export class LLMClient {
     const responseMessages = (await result.response).messages as CoreMessage[];
     this.replacePlaceholderWithTurn(responseMessages, messageIndex);
     this.usage.record(await result.usage);
+    annotateTurnUsage(this.usage.last);
     await this.recordSteps(steps);
 
     this.emit(messageId, { content: await result.text, isComplete: true });

@@ -160,17 +160,32 @@ export class Tab {
         const el = e.target;
         if (!(el instanceof Element)) return;
         const tag = el.tagName?.toLowerCase?.();
-        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') return;
-        send('input', {
-          tag,
-          name: el.getAttribute('name') || null,
-          id: el.id || null,
-          type: el.getAttribute('type') || null,
-          autocomplete: el.getAttribute('autocomplete') || null,
-          value: typeof el.value === 'string' ? el.value : '',
-        });
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+          send('input', {
+            tag,
+            name: el.getAttribute('name') || null,
+            id: el.id || null,
+            type: el.getAttribute('type') || null,
+            autocomplete: el.getAttribute('autocomplete') || null,
+            value: typeof el.value === 'string' ? el.value : '',
+          });
+        } else if (el.getAttribute('contenteditable') != null) {
+          send('input', {
+            tag,
+            name: el.getAttribute('name') || el.getAttribute('data-name') || null,
+            id: el.id || null,
+            type: 'contenteditable',
+            autocomplete: null,
+            value: (el.textContent || '').slice(0, 500),
+          });
+        }
       };
       document.addEventListener('change', onInput, true);
+      document.addEventListener('input', (e) => {
+        const el = e.target;
+        if (!(el instanceof Element)) return;
+        if (el.getAttribute('contenteditable') != null) onInput(e);
+      }, true);
     })();`;
     try {
       await this.webContentsView.webContents.executeJavaScript(script, true);
@@ -220,6 +235,40 @@ export class Tab {
 
   async screenshot(): Promise<NativeImage> {
     return await this.webContentsView.webContents.capturePage();
+  }
+
+  /**
+   * Click at a viewport coordinate (CSS pixels relative to the page).
+   * Used by visual grounding, which returns pixels rather than a CSS selector.
+   */
+  async clickAt(x: number, y: number): Promise<void> {
+    const wc = this.webContentsView.webContents;
+    wc.sendInputEvent({ type: "mouseMove", x, y });
+    wc.sendInputEvent({
+      type: "mouseDown",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+    wc.sendInputEvent({
+      type: "mouseUp",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+  }
+
+  /** Current CSS viewport size, used to map normalized grounding coords to pixels. */
+  async viewportSize(): Promise<{ innerWidth: number; innerHeight: number }> {
+    const result = await this.runJs(
+      `({ innerWidth: window.innerWidth, innerHeight: window.innerHeight })`,
+    );
+    return {
+      innerWidth: Number(result?.innerWidth) || 0,
+      innerHeight: Number(result?.innerHeight) || 0,
+    };
   }
 
   private canRunPageScript(): boolean {

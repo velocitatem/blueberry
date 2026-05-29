@@ -1,3 +1,4 @@
+import "./tracer"; // must be first — instruments outgoing LLM API calls
 import { app, BrowserWindow } from "electron";
 import { electronApp } from "@electron-toolkit/utils";
 import { Window } from "./Window";
