@@ -1,6 +1,6 @@
 import { generateText, type LanguageModel } from "ai";
 import type { AppEvent } from "./events";
-import type { EventTail } from "./eventTail";
+import type { SessionLog } from "./SessionLog";
 import { createLogger } from "./logger";
 
 const log = createLogger("workflow");
@@ -17,8 +17,6 @@ export interface CompiledWorkflow {
 }
 
 const MAX_EVENTS_FOR_PROMPT = 80;
-
-const isTabEvent = (event: AppEvent): boolean => event.source === "tab";
 
 const summarizeEvent = (event: AppEvent): Record<string, unknown> => {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -55,31 +53,16 @@ const stripJsonFence = (text: string): string => {
 
 export class WorkflowCompiler {
   constructor(
-    private readonly tail: EventTail,
+    private readonly log: SessionLog,
     private readonly model: LanguageModel | null,
   ) {}
 
   recentSessionEvents(): AppEvent[] {
-    const all = this.tail.snapshot(isTabEvent);
-    return all.slice(-MAX_EVENTS_FOR_PROMPT);
+    return this.log.recentTabEvents(MAX_EVENTS_FOR_PROMPT);
   }
 
-  sessionSummary(): {
-    eventCount: number;
-    uniqueUrls: number;
-    startedAt: string | null;
-  } {
-    const events = this.tail.snapshot(isTabEvent);
-    const urls = new Set<string>();
-    for (const event of events) {
-      const url = (event.payload as { url?: string } | undefined)?.url;
-      if (url) urls.add(url);
-    }
-    return {
-      eventCount: events.length,
-      uniqueUrls: urls.size,
-      startedAt: events[0]?.timestamp ?? null,
-    };
+  sessionSummary() {
+    return this.log.summary();
   }
 
   async compile(): Promise<CompiledWorkflow> {

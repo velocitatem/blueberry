@@ -1,17 +1,17 @@
 import type { EventContext } from "./EventContext";
 import type { EventRegistry, InvokeHandler } from "./EventRegistry";
-import type { EventTail } from "../eventTail";
+import type { SessionLog } from "../SessionLog";
 import { WorkflowCompiler } from "../WorkflowCompiler";
 
 export const registerWorkflowEvents = (
   registry: EventRegistry,
   ctx: EventContext,
-  tail: EventTail,
+  sessionLog: SessionLog,
 ): void => {
   const { mainWindow } = ctx;
 
   const getCompiler = (): WorkflowCompiler =>
-    new WorkflowCompiler(tail, mainWindow.sidebar.client.languageModel);
+    new WorkflowCompiler(sessionLog, mainWindow.sidebar.client.languageModel);
 
   const handlers = {
     "workflow-session-summary": () => getCompiler().sessionSummary(),
@@ -37,7 +37,7 @@ export const registerWorkflowEvents = (
       }
     },
     "workflow-clear-session": () => {
-      tail.clear();
+      sessionLog.clear();
       return { ok: true as const };
     },
   } satisfies Record<string, InvokeHandler>;

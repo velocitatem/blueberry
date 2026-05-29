@@ -1,5 +1,5 @@
 import type { Window } from "../Window";
-import type { EventTail } from "../eventTail";
+import type { SessionLog } from "../SessionLog";
 import { EventContext } from "./EventContext";
 import type { EventRegistry } from "./EventRegistry";
 import { registerDebugEvents } from "./registerDebugEvents";
@@ -12,7 +12,7 @@ import { registerWorkflowEvents } from "./registerWorkflowEvents";
 export const registerWindowEvents = (
   registry: EventRegistry,
   mainWindow: Window,
-  eventTail: EventTail
+  sessionLog: SessionLog,
 ): void => {
   const ctx = new EventContext(mainWindow);
 
@@ -20,6 +20,6 @@ export const registerWindowEvents = (
   registerSidebarEvents(registry, ctx);
   registerPageContentEvents(registry, ctx);
   registerThemeEvents(registry, ctx);
-  registerWorkflowEvents(registry, ctx, eventTail);
+  registerWorkflowEvents(registry, ctx, sessionLog);
   registerDebugEvents(registry);
 };

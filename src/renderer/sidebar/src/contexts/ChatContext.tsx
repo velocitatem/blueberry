@@ -27,6 +27,32 @@ interface ChatContextType {
 
 const ChatContext = createContext<ChatContextType | null>(null)
 
+const extractText = (content: any): string => {
+    if (typeof content === 'string') return content
+    if (!Array.isArray(content)) return ''
+    return content
+        .filter((p: any) => p?.type === 'text' && typeof p.text === 'string')
+        .map((p: any) => p.text)
+        .join('')
+}
+
+const toDisplayMessages = (raw: any[]): Message[] => {
+    const out: Message[] = []
+    raw.forEach((msg, index) => {
+        if (msg.role !== 'user' && msg.role !== 'assistant') return
+        const content = extractText(msg.content).trim()
+        if (!content) return
+        out.push({
+            id: `msg-${index}`,
+            role: msg.role,
+            content,
+            timestamp: Date.now(),
+            isStreaming: false,
+        })
+    })
+    return out
+}
+
 export const useChat = () => {
     const context = useContext(ChatContext)
     if (!context) {
@@ -45,17 +71,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             try {
                 const storedMessages = await window.sidebarAPI.getMessages()
                 if (storedMessages && storedMessages.length > 0) {
-                    // Convert CoreMessage format to our frontend Message format
-                    const convertedMessages = storedMessages.map((msg: any, index: number) => ({
-                        id: `msg-${index}`,
-                        role: msg.role,
-                        content: typeof msg.content === 'string' 
-                            ? msg.content 
-                            : msg.content.find((p: any) => p.type === 'text')?.text || '',
-                        timestamp: Date.now(),
-                        isStreaming: false
-                    }))
-                    setMessages(convertedMessages)
+                    setMessages(toDisplayMessages(storedMessages))
                 }
             } catch (error) {
                 log.error({ err: error }, 'Failed to load messages')
@@ -131,17 +147,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Listen for message updates from main process
         const handleMessagesUpdated = (updatedMessages: any[]) => {
-            // Convert CoreMessage format to our frontend Message format
-            const convertedMessages = updatedMessages.map((msg: any, index: number) => ({
-                id: `msg-${index}`,
-                role: msg.role,
-                content: typeof msg.content === 'string' 
-                    ? msg.content 
-                    : msg.content.find((p: any) => p.type === 'text')?.text || '',
-                timestamp: Date.now(),
-                isStreaming: false
-            }))
-            setMessages(convertedMessages)
+            setMessages(toDisplayMessages(updatedMessages))
         }
 
         window.sidebarAPI.onChatResponse(handleChatResponse)

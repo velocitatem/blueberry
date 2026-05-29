@@ -6,28 +6,27 @@ import { EventRegistry } from "./ipc/EventRegistry";
 import { registerWindowEvents } from "./ipc/registerWindowEvents";
 import { createKafkaEventPublisher } from "./kafka";
 import { createLogger } from "./logger";
-import { EventTail, composeSinks } from "./eventTail";
+import { composeSinks } from "./eventTail";
+import { FileSessionLog } from "./SessionLog";
 
 const log = createLogger("app");
 
 let mainWindow: Window | null = null;
 let menu: AppMenu | null = null;
 const kafkaEventPublisher = createKafkaEventPublisher();
-const eventTail = new EventTail();
-const eventSink = composeSinks(kafkaEventPublisher.publish, eventTail.sink);
 
 /** App-wide IPC registry; tracks channels this app registered for safe teardown. */
 export let appEventRegistry: EventRegistry | null = null;
 
-const createWindow = (): Window => {
+const createWindow = (sessionLog: FileSessionLog): Window => {
+  const eventSink = composeSinks(kafkaEventPublisher.publish, sessionLog.sink);
   appEventRegistry?.cleanup();
 
   appEventRegistry = appEventRegistry ?? new EventRegistry(eventSink);
-  // lets us extensably in the future manage new tabs and windows
 
   const window = new Window(eventSink);
   menu = new AppMenu(window);
-  registerWindowEvents(appEventRegistry, window, eventTail);
+  registerWindowEvents(appEventRegistry, window, sessionLog);
   return window;
 };
 
@@ -39,14 +38,15 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId("com.electron");
   log.info("Application starting");
 
-  mainWindow = createWindow();
+  const sessionLog = FileSessionLog.load();
+  mainWindow = createWindow(sessionLog);
   connectKafkaEvents();
 
   app.on("activate", () => {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow();
+      mainWindow = createWindow(sessionLog);
     }
   });
 });
