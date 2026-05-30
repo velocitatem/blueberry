@@ -7,6 +7,10 @@ import {
   type TabEventKind,
 } from "./events";
 import { createLogger } from "./logger";
+import {
+  PAGE_STATE_SCRIPT,
+  type PageStateSnapshot,
+} from "./PageState";
 
 const log = createLogger("tab");
 
@@ -311,6 +315,26 @@ export class Tab {
         }
       })()`
     ) ?? "";
+  }
+
+  /**
+   * Extract a compact structured snapshot of the active page (interactive,
+   * in-viewport elements with role/name/bbox/state + a `ref` selector). Used as
+   * the per-turn page context in place of a full-resolution screenshot.
+   */
+  async getPageState(): Promise<PageStateSnapshot | null> {
+    const raw = await this.runJs(PAGE_STATE_SCRIPT);
+    if (!raw || typeof raw !== "object") return null;
+    if ("error" in raw && raw.error) {
+      log.debug({ err: raw.error, tabId: this._id }, "page state extraction failed");
+      return null;
+    }
+    const snapshot = raw as PageStateSnapshot;
+    return {
+      ...snapshot,
+      url: this._url || snapshot.url,
+      title: this._title || snapshot.title,
+    };
   }
 
   loadURL(url: string): Promise<void> {

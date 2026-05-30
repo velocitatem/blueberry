@@ -52,14 +52,6 @@ export class Window {
       }
     });
 
-    // Handle external link opening
-    this.tabsMap.forEach((tab) => {
-      tab.webContents.setWindowOpenHandler((details) => {
-        shell.openExternal(details.url);
-        return { action: "deny" };
-      });
-    });
-
     this.setupEventListeners();
   }
 
@@ -96,6 +88,15 @@ export class Window {
     const tabId = `tab-${++this.tabCounter}`;
     const tab = new Tab(tabId, url, this.eventSink);
 
+    // Route window.open / target=_blank / "open in new tab" into our own tab
+    // system instead of the OS default browser.
+    tab.webContents.setWindowOpenHandler((details) => {
+      this.openUrl(details.url, {
+        background: details.disposition === "background-tab",
+      });
+      return { action: "deny" };
+    });
+
     // Add the tab's WebContentsView to the window
     this._baseWindow.contentView.addChildView(tab.view);
 
@@ -120,6 +121,23 @@ export class Window {
     }
 
     return tab;
+  }
+
+  /**
+   * Open a URL requested by a page (new window / target=_blank). Web URLs open
+   * as a new tab inside this window; non-web schemes (mailto:, tel:, etc.) are
+   * delegated to the OS. Foreground requests become the active tab; background
+   * requests (e.g. ctrl/cmd-click) stay in the background.
+   */
+  private openUrl(url: string, options: { background?: boolean } = {}): void {
+    if (!url) return;
+    const isWeb = /^https?:\/\//i.test(url) || url.startsWith("about:");
+    if (!isWeb) {
+      void shell.openExternal(url).catch(() => undefined);
+      return;
+    }
+    const tab = this.createTab(url);
+    if (!options.background) this.switchActiveTab(tab.id);
   }
 
   closeTab(tabId: string): boolean {

@@ -16,6 +16,18 @@ export const observeTools = registerTools({
       withActiveTab(ctx, async (tab) => ({ url: tab.url }), "url"),
   }),
 
+  getPageState: defineTool({
+    description:
+      "Get a fresh structured snapshot of the active page: URL/title/scroll plus the interactive elements currently visible in the viewport (id, role, accessible name, pixel bbox, enabled/checked state, and a `ref` CSS selector). Use this instead of a screenshot to decide what to click/type, and to refresh your view after the page changes. Act on an element by passing its `ref` to clickElement/inputText.",
+    inputSchema: z.object({}),
+    execute: (_input, ctx) =>
+      withActiveTab(
+        ctx,
+        async (tab) => ({ state: await tab.getPageState() }),
+        "state"
+      ),
+  }),
+
   getPageText: defineTool({
     description:
       "Get the visible text content of the active page. Use this when you need to read or search page content.",

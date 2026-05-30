@@ -309,6 +309,17 @@ export interface AgentConfig {
   stepLimit: number;
   temperature: number;
   debugDir: string | null;
+  /**
+   * Feed a compact structured page-state snapshot (AX tree + geometry) each
+   * turn. This is the default per-turn page context and replaces full-resolution
+   * screenshots. On by default.
+   */
+  attachPageState: boolean;
+  /**
+   * Also attach a full-resolution screenshot each turn. Off by default — the
+   * agent relies on page_state + on-demand visual grounding instead. Opt in with
+   * LLM_ATTACH_SCREENSHOT=1 (e.g. for debugging or escalation).
+   */
   attachScreenshot: boolean;
 }
 
@@ -316,5 +327,6 @@ export const defaultAgentConfig = (): AgentConfig => ({
   stepLimit: Number(process.env.LLM_STEP_LIMIT) || 1_000_000,
   temperature: Number(process.env.LLM_TEMPERATURE) || 0.7,
   debugDir: process.env.LLM_DEBUG_DIR || null,
-  attachScreenshot: process.env.LLM_ATTACH_SCREENSHOT !== "0",
+  attachPageState: process.env.LLM_ATTACH_PAGE_STATE !== "0",
+  attachScreenshot: process.env.LLM_ATTACH_SCREENSHOT === "1",
 });

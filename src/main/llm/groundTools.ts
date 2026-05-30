@@ -7,7 +7,7 @@ export const GROUND_TOOL_NAMES = new Set(["clickByDescription"]);
 export const groundTools = registerTools({
   clickByDescription: defineTool({
     description:
-      "Click an element described in plain language (e.g. 'the blue Sign in button', 'the search box'). A local vision model locates it on the current screenshot and clicks the pixel — no CSS selector or HTML needed. Prefer this over clickElement when you can see the target in the screenshot but don't have a reliable selector.",
+      "Click an element described in plain language (e.g. 'the blue Sign in button', 'the magnifying-glass icon'). A local vision model locates it on the current screenshot and clicks the pixel — no CSS selector or HTML needed. Use this when the target is visual/icon-only, ambiguous, or NOT present in page_state. If the element is listed in page_state, prefer clickElement with its `ref` selector instead.",
     inputSchema: z.object({
       description: z
         .string()

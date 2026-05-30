@@ -3,6 +3,9 @@ import type { FlexibleSchema } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 import type { Window } from "../Window";
 import type { Grounder } from "../grounding/Grounder";
+import { createLogger } from "../logger";
+
+const log = createLogger("tool");
 
 export type ToolContext = { window: Window | null; grounder?: Grounder | null };
 
@@ -59,15 +62,62 @@ export const registerTools = <T extends ToolDefs>(defs: T): T => {
   return defs;
 };
 
-const buildTool = (def: ToolDef<any, any>, ctx: ToolContext): Tool<any, any> => ({
+/** Compact, log-safe preview of a tool input/result. */
+const preview = (value: unknown, max = 220): string => {
+  if (value === undefined || value === null) return "";
+  let s: string;
+  if (typeof value === "string") s = value;
+  else {
+    try {
+      s = JSON.stringify(value);
+    } catch {
+      s = String(value);
+    }
+  }
+  return s.length <= max ? s : `${s.slice(0, max)}…(+${s.length - max})`;
+};
+
+/** A result is a failure when it carries an `error`/`reason` field. */
+const resultFailed = (r: unknown): boolean => {
+  if (!r || typeof r !== "object") return false;
+  const o = r as Record<string, unknown>;
+  return o.error != null || o.reason != null;
+};
+
+const buildTool = (
+  name: string,
+  def: ToolDef<any, any>,
+  ctx: ToolContext
+): Tool<any, any> => ({
   description: def.description,
   inputSchema: def.inputSchema,
-  execute: (input) => def.execute(input, ctx),
+  execute: async (input) => {
+    const startedAt = Date.now();
+    log.info({ tool: name, input: preview(input) }, `tool:call ${name}`);
+    try {
+      const result = await def.execute(input, ctx);
+      const ms = Date.now() - startedAt;
+      const meta = { tool: name, ms, result: preview(result) };
+      if (resultFailed(result)) log.warn(meta, `tool:fail ${name}`);
+      else log.info(meta, `tool:ok ${name}`);
+      return result;
+    } catch (error) {
+      log.error(
+        {
+          tool: name,
+          ms: Date.now() - startedAt,
+          err: error instanceof Error ? error.message : String(error),
+        },
+        `tool:error ${name}`
+      );
+      throw error;
+    }
+  },
 });
 
 export const createTools = (ctx: ToolContext): ToolSet =>
   Object.fromEntries(
-    Object.entries(registry).map(([name, def]) => [name, buildTool(def, ctx)])
+    Object.entries(registry).map(([name, def]) => [name, buildTool(name, def, ctx)])
   );
 
 export type ToolPolicy = {

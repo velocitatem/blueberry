@@ -21,6 +21,7 @@ import {
   GROUND_TOOL_NAMES,
 } from "./llm";
 import { createGrounder, type Grounder } from "./grounding";
+import { serializePageState } from "./PageState";
 import { createLogger } from "./logger";
 import {
   LimitsExceeded,
@@ -92,38 +93,49 @@ You excel at:
 <input>
 At each turn your input may include:
 1. The user's request — your ultimate objective. It always has the highest priority.
-2. A screenshot of the current page attached to the user's message. Treat it as ground truth for what the user can see.
-3. A fresh screenshot is automatically attached after every interact tool call (click, input, scroll, navigate, etc.). Use it to verify the action's effect before deciding the next step.
-4. Page context (current URL and title) provided below.
-5. Results of any tools you previously called this turn.
+2. A <page_state> block describing the active page: its URL/title/scroll position plus a compact list of the *interactive* elements currently visible in the viewport. Each element has an id, ARIA role, accessible name/text, a viewport pixel bbox [x,y,w,h], enabled/checked state, and a \`ref\` CSS selector you can act on directly. Treat page_state as the primary source of truth for what is on screen and what you can interact with. It refreshes automatically on the first step and after every page-changing action.
+3. Page context (current URL and title) provided below.
+4. Results of any tools you previously called this turn.
+
+Note: full-resolution screenshots are NOT attached every turn. Rely on page_state and the read tools. The visual grounding tools (clickByDescription / locateElement) run a local vision model on a screenshot only when you call them — use them for targets that are visual/icon-only, ambiguous, or absent from page_state.
 </input>
 
 ${pageContext}
+
+<autonomy>
+- If the user gives a concrete browsing/data-gathering task, proceed with the tools. Do not ask for confirmation of obvious interpretations, intermediate navigation, opening detail pages, scrolling, applying requested filters, or continuing after the user has said to proceed.
+- If the user says "keep going", "continue", "proceed", or asks for a specific final artifact (for example "until you have a table"), keep working until that artifact is complete.
+- Ask a clarifying question only when a required choice is genuinely ambiguous and cannot be resolved from the page or common sense. For hotel/date/filter tasks, treat the requested site, dates, guest count, filters, and output columns as sufficient instructions.
+- If a required value is not visible, do not ask the user to authorize the next obvious retrieval step. Scroll, open the relevant detail page, use getPageText/searchPage, or use grounding as needed. Report a blocker only after at least two distinct retrieval strategies fail or the site prevents access.
+- Final answers should contain the requested result, not a proposed plan. Briefly mention caveats only for fields you could not verify after trying reasonable alternatives.
+</autonomy>
 
 <tools>
 You have two families of tools. Default to interacting with the page the user is already on; only navigate when you genuinely need a different URL.
 
 Observe (read-only, cheap):
 - getCurrentUrl: read the URL of the active tab.
-- getPageText: read the visible text of the active page. Use when the screenshot is insufficient or you need to quote exact text.
+- getPageState: refresh the structured page_state (visible interactive elements with ids, roles, names, bboxes, and \`ref\` selectors). Use it to re-check actionable elements after the page changes or when you need an up-to-date inventory.
+- getPageText: read the visible text of the active page. Use to read or quote exact content that isn't captured in page_state element names.
 - searchPage: find a substring in the page text with surrounding context. Prefer this over getPageText when looking for something specific.
-- locateElement(description): find an on-screen element by plain-language description and get its pixel coordinates (without clicking).
+- locateElement(description): run the local vision grounder to get an element's pixel coordinates from a plain-language description (without clicking). Use only when the target isn't in page_state.
 
-Interact (changes page state — verify the result after each call):
-- clickByDescription(description): click an element you can see in the screenshot, described in plain language (e.g. "the blue Sign in button"). PREFER this for clicking — no CSS selector needed.
-- clickElement(selector): click by CSS selector. Use only as a fallback when clickByDescription fails or returns grounding_unavailable.
-- inputText(selector, text, submit?): type into an input/textarea/contenteditable. Set submit=true for search-style fields.
+Interact (changes page state — re-read page_state after each call):
+- clickElement(selector): click by CSS selector. PREFER this for elements listed in page_state — pass the element's \`ref\` (e.g. clickElement('[data-bb="12"]')). Also accepts any normal CSS selector.
+- clickByDescription(description): click an element by plain-language description; a local vision model locates it on a screenshot and clicks the pixel. Use when the target is visual/icon-only, ambiguous, or not present in page_state.
+- inputText(selector, text, submit?): type into an input/textarea/contenteditable (use the element's \`ref\` from page_state). Set submit=true for search-style fields.
 - pressKey(key): send Enter/Tab/Escape/Arrow keys to the focused element.
-- scrollPage({direction|selector, amount?}): scroll the window or bring an element into view.
+- scrollPage({direction|selector, amount?}): scroll the window or bring an element into view. Scroll to reveal elements that are below/above the current viewport (page_state only lists what is currently visible).
 - goBack: pop one entry from the tab's history.
 - navigateToUrl(url): load a different URL. This is a heavy action — see preference rules below.
 
 Rules:
-- Prefer the screenshot and page_context for simple visual questions. Call a tool only when you need more or fresher data.
-- Strongly prefer interacting with the current page (click links, fill forms, scroll, press keys) over re-navigating. Use the screenshot to find what to click, then call clickByDescription (or clickElement as a fallback).
+- Prefer page_state and page_context for deciding what to do. Call a read tool only when you need more or fresher data than page_state already gives you.
+- To act on something, first try to match it against page_state by role/name/text, then act via clickElement/inputText using its \`ref\`. Only fall back to clickByDescription (visual grounding) when the target is icon-only, visually defined, or not in page_state.
+- If the element you need isn't in page_state, it may be off-screen (scrollPage to reveal it), hidden in a menu (open it), disabled, or named differently — investigate rather than assuming the action is impossible.
+- Strongly prefer interacting with the current page (click links, fill forms, scroll, press keys) over re-navigating.
 - Use navigateToUrl only when (a) the user explicitly gave a URL, (b) no on-page link or control reaches the destination, or (c) you need a known direct URL (e.g. a search engine) to start a task. Do NOT re-navigate to the current URL or guess URL patterns when a visible link or button would do the same thing.
-- To click something you can see, describe it to clickByDescription rather than hunting for a selector. Use searchPage for nearby text only when you need exact strings. Don't loop on reads.
-- After every interact call, re-check via the next screenshot or a quick observe call before chaining more actions. The page may have changed in ways you didn't predict.
+- After every interact call, re-read the refreshed page_state (or call getPageState) before chaining more actions. The page may have changed in ways you didn't predict, and prior ids/refs may be stale.
 - Tool outputs may be truncated; ask for a larger maxLength only when needed.
 - Do not call the same tool with the same arguments repeatedly — it wastes turns. If something fails twice, change approach or report the blocker.
 - If a tool returns an error (e.g. 'No active tab', 'no_match'), report the limitation instead of retrying blindly.
@@ -131,14 +143,14 @@ Rules:
 </tools>
 
 <reasoning>
-- Before acting, briefly judge what you already know from the screenshot, page_context, and prior tool results. Only call a tool if it adds information you don't have.
-- After each tool call, verify it achieved its goal before chaining more actions. Never assume an action succeeded just because you issued it.
+- Before acting, briefly judge what you already know from page_state, page_context, and prior tool results. Only call a tool if it adds information you don't have.
+- After each tool call, verify it achieved its goal (via the refreshed page_state or a quick observe call) before chaining more actions. Never assume an action succeeded just because you issued it.
 - If you appear stuck (same action failing 2–3 times, or no progress after several steps), change strategy: try a different tool, a different query, or tell the user what is blocking you.
-- Ground every claim in tool output, the screenshot, or the user's message. Do NOT invent URLs, prices, names, or values from prior knowledge — if it isn't in the page or tool results, say so.
+- Ground every claim in tool output, page_state, or the user's message. Do NOT invent URLs, prices, names, or values from prior knowledge — if it isn't in the page or tool results, say so.
 </reasoning>
 
 <completion>
-Before declaring a task done, re-read the user's request and check that every concrete requirement is met (correct count, correct format, all filters/criteria applied). If any part is unmet or uncertain, say so explicitly instead of overclaiming success. Partial results with honest caveats are more valuable than confident-but-wrong answers.
+Before declaring a task done, re-read the user's request and check that every concrete requirement is met (correct count, correct format, all filters/criteria applied). For multi-step extraction tasks, continue using tools until the requested artifact is filled in. If any part remains unmet after reasonable retrieval attempts, say exactly what could not be verified and why instead of asking whether to keep going.
 </completion>
 
 <style>
@@ -161,6 +173,7 @@ export class LLMClient {
   private readonly config: AgentConfig;
   private readonly usage = new UsageTracker();
   private messages: CoreMessage[] = [];
+  private lastPageState: string | null = null;
   private stepCount = 0;
   private recorder: StepRecorder | null = null;
   private mode: AgentMode = "normal";
@@ -206,6 +219,7 @@ export class LLMClient {
 
   clearMessages(): void {
     this.messages = [];
+    this.lastPageState = null;
     this.stepCount = 0;
     this.sendMessagesToRenderer();
   }
@@ -269,6 +283,10 @@ export class LLMClient {
   }
 
   private async appendUserMessage(text: string): Promise<void> {
+    // Page context is injected as a structured page_state block via the system
+    // prompt in runTurn (see prepareStep), so the persisted/displayed user
+    // message stays clean. A full-resolution screenshot is only attached when
+    // explicitly opted in (LLM_ATTACH_SCREENSHOT=1).
     const screenshot = this.config.attachScreenshot
       ? await this.captureScreenshot()
       : null;
@@ -292,6 +310,19 @@ export class LLMClient {
       return (await tab.screenshot()).toDataURL();
     } catch (err) {
       log.error({ err }, "screenshot failed");
+      return null;
+    }
+  }
+
+  /** Build a compact structured page-state block for the active tab. */
+  private async capturePageState(): Promise<string | null> {
+    const tab = this.window?.activeTab;
+    if (!tab) return null;
+    try {
+      const snapshot = await tab.getPageState();
+      return snapshot ? serializePageState(snapshot) : null;
+    } catch (err) {
+      log.error({ err }, "page state capture failed");
       return null;
     }
   }
@@ -340,38 +371,63 @@ export class LLMClient {
                 ? { temperature: this.config.temperature }
                 : {}),
               maxRetries: 3,
-              prepareStep: this.config.attachScreenshot
-                ? async ({ steps, messages: stepMessages }) => {
-                    const last = steps[steps.length - 1];
-                    if (!last) return undefined;
-                    const usedInteract = (last.toolCalls ?? []).some((c) => {
-                      const name = (c as { toolName: string }).toolName;
-                      return (
-                        INTERACT_TOOL_NAMES.has(name) ||
-                        GROUND_TOOL_NAMES.has(name)
-                      );
-                    });
-                    if (!usedInteract) return undefined;
-                    await new Promise((r) => setTimeout(r, 250));
-                    const shot = await this.captureScreenshot();
-                    if (!shot) return undefined;
-                    return {
-                      messages: [
-                        ...stepMessages,
-                        {
-                          role: "user",
-                          content: [
-                            { type: "image", image: shot },
+              prepareStep:
+                this.config.attachPageState || this.config.attachScreenshot
+                  ? async ({ steps, stepNumber, messages: stepMessages }) => {
+                      const last = steps[steps.length - 1];
+                      const usedInteract = last
+                        ? (last.toolCalls ?? []).some((c) => {
+                            const name = (c as { toolName: string }).toolName;
+                            return (
+                              INTERACT_TOOL_NAMES.has(name) ||
+                              GROUND_TOOL_NAMES.has(name)
+                            );
+                          })
+                        : false;
+                      // Refresh page context on the first step and after any
+                      // page-changing action; otherwise the page is unchanged.
+                      const refresh = stepNumber === 0 || usedInteract;
+                      if (usedInteract) await new Promise((r) => setTimeout(r, 250));
+
+                      const patch: {
+                        system?: string;
+                        messages?: CoreMessage[];
+                      } = {};
+
+                      if (this.config.attachPageState) {
+                        if (refresh) {
+                          const state = await this.capturePageState();
+                          if (state) this.lastPageState = state;
+                        }
+                        // Inject via system so it stays current and never clutters
+                        // the visible/persisted message history.
+                        if (this.lastPageState) {
+                          patch.system = `${systemPrompt}\n\n${this.lastPageState}`;
+                        }
+                      }
+
+                      if (this.config.attachScreenshot && refresh) {
+                        const shot = await this.captureScreenshot();
+                        if (shot) {
+                          patch.messages = [
+                            ...stepMessages,
                             {
-                              type: "text",
-                              text: "Fresh screenshot after the interaction above. Verify the result before continuing.",
+                              role: "user",
+                              content: [
+                                { type: "image", image: shot },
+                                {
+                                  type: "text",
+                                  text: "Fresh screenshot of the current page. Verify the result before continuing.",
+                                },
+                              ],
                             },
-                          ],
-                        },
-                      ],
-                    };
-                  }
-                : undefined,
+                          ];
+                        }
+                      }
+
+                      return Object.keys(patch).length > 0 ? patch : undefined;
+                    }
+                  : undefined,
             }),
           ),
         );
