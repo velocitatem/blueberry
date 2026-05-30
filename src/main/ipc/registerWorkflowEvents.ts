@@ -2,9 +2,13 @@ import type { EventContext } from "./EventContext";
 import type { EventRegistry, InvokeHandler } from "./EventRegistry";
 import type { SessionLog } from "../SessionLog";
 import { WorkflowCompiler } from "../WorkflowCompiler";
-import { BehaviorGraphBuilder, summarizeGraph } from "../graph/BehaviorGraphBuilder";
+import {
+  BehaviorGraphBuilder,
+  summarizeGraph,
+} from "../graph/BehaviorGraphBuilder";
 import type { GraphStore } from "../graph/GraphStore";
 import { TaskGraphCompiler, type PacketStore } from "../TaskGraphCompiler";
+import type { AutonomyLevel } from "../llm/nightHarness";
 
 export const registerWorkflowEvents = (
   registry: EventRegistry,
@@ -45,16 +49,30 @@ export const registerWorkflowEvents = (
       sessionLog.clear();
       return { ok: true as const };
     },
+    "workflow-clear-data": () => {
+      sessionLog.clear();
+      graphStore.clear();
+      packetStore.clear();
+      return { ok: true as const };
+    },
     "workflow-build-graph": () => {
       const events = sessionLog.tabEvents();
       const graph = BehaviorGraphBuilder.buildBehaviorGraph(events);
       graphStore.save(graph);
-      return { ok: true as const, graphId: graph.id, summary: summarizeGraph(graph) };
+      return {
+        ok: true as const,
+        graphId: graph.id,
+        summary: summarizeGraph(graph),
+      };
     },
     "workflow-get-graph-summary": () => {
       const graph = graphStore.active();
       if (!graph) return { ok: false as const, error: "No graph built yet." };
-      return { ok: true as const, graphId: graph.id, summary: summarizeGraph(graph) };
+      return {
+        ok: true as const,
+        graphId: graph.id,
+        summary: summarizeGraph(graph),
+      };
     },
     "workflow-compile-task-packet": async () => {
       const graph = graphStore.active();
@@ -74,17 +92,24 @@ export const registerWorkflowEvents = (
       }
     },
     "workflow-start-night-agent": async (_: unknown, args: unknown) => {
-      const { packetId } = (args ?? {}) as { packetId?: string };
-      const resolved = packetId ?? packetStore.byGraphId(graphStore.active()?.id ?? "")?.id;
-      if (!resolved) return { ok: false as const, error: "No packet available." };
-      mainWindow.sidebar.client.setMode("night", resolved);
+      const { packetId, autonomy } = (args ?? {}) as {
+        packetId?: string;
+        autonomy?: AutonomyLevel;
+      };
+      const resolved =
+        packetId ?? packetStore.byGraphId(graphStore.active()?.id ?? "")?.id;
+      if (!resolved)
+        return { ok: false as const, error: "No packet available." };
+      mainWindow.sidebar.client.setMode("night", resolved, autonomy);
       const packet = packetStore.byId(resolved);
       const messageId = `night-${Date.now()}`;
-      const motifInfo = packet?.motif ? ` This is a ${packet.motif} task.` : "";
       const kickMessage = packet
-        ? `Night Agent: your goal is "${packet.goal}".${motifInfo} The plan is in the context above. Call your first tool now.`
+        ? `Night Agent: your goal is "${packet.goal}". The plan is in the context above. Call your first tool now.`
         : "Night Agent active. The plan is in the context above. Call your first tool now.";
-      await mainWindow.sidebar.client.sendChatMessage({ message: kickMessage, messageId });
+      await mainWindow.sidebar.client.sendChatMessage({
+        message: kickMessage,
+        messageId,
+      });
       return { ok: true as const, packetId: resolved, messageId };
     },
     "workflow-stop-night-agent": () => {
@@ -94,6 +119,7 @@ export const registerWorkflowEvents = (
     "workflow-get-agent-mode": () => ({
       mode: mainWindow.sidebar.client.getMode(),
     }),
+    "workflow-night-status": () => mainWindow.sidebar.client.getNightStatus(),
   } satisfies Record<string, InvokeHandler>;
 
   registry.handleMany(handlers);

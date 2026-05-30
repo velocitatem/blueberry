@@ -73,8 +73,9 @@ type CompileResult =
 interface GraphSummaryData {
   pageCount: number;
   actionCount: number;
-  entityCount: number;
   openLoopCount: number;
+  topPattern: string | null;
+  topSalientUrl: string | null;
   likelyFinishAction: string | null;
   startUrl: string | null;
   lastUrl: string | null;
@@ -95,6 +96,20 @@ type CompilePacketResult =
 type StartNightResult =
   | { ok: true; packetId: string }
   | { ok: false; error: string };
+
+type AutonomyLevel = "summarize" | "prepare" | "act";
+
+interface NightStatus {
+  active: boolean;
+  status: "idle" | "running" | "done" | "stopped";
+  reason: string | null;
+  stepsUsed: number;
+  stepBudget: number;
+  autonomy: AutonomyLevel;
+  packetId: string | null;
+  startedAt: number | null;
+  deadline: number | null;
+}
 
 interface SidebarAPI {
   // Chat functionality
@@ -118,14 +133,19 @@ interface SidebarAPI {
   getSessionEvents: () => Promise<SessionEventView[]>;
   compileWorkflow: () => Promise<CompileResult>;
   clearSession: () => Promise<{ ok: true }>;
+  clearBehaviorData: () => Promise<{ ok: true }>;
 
   // NightGraph
   buildGraph: () => Promise<BuildGraphResult>;
   getGraphSummary: () => Promise<GraphSummaryResult>;
   compileTaskPacket: () => Promise<CompilePacketResult>;
-  startNightAgent: (packetId?: string) => Promise<StartNightResult>;
+  startNightAgent: (
+    packetId?: string,
+    autonomy?: AutonomyLevel,
+  ) => Promise<StartNightResult>;
   stopNightAgent: () => Promise<{ ok: true }>;
   getAgentMode: () => Promise<{ mode: "normal" | "night" }>;
+  getNightStatus: () => Promise<NightStatus>;
 }
 
 declare global {
@@ -134,4 +154,3 @@ declare global {
     sidebarAPI: SidebarAPI;
   }
 }
-

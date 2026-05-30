@@ -4,7 +4,6 @@ import { app } from "electron";
 import { generateText, type LanguageModel } from "ai";
 import { randomUUID } from "crypto";
 import type { BehaviorGraph, PageNode } from "./graph/BehaviorGraph";
-import { summarizeGraph } from "./graph/BehaviorGraphBuilder";
 import { createLogger } from "./logger";
 
 const log = createLogger("task-compiler");
@@ -22,7 +21,6 @@ export interface TaskPacket {
   compiledAt: string;
   goal: string;
   summary: string;
-  motif: string | null;
   entities: Array<{ name: string; value: string; sensitive: boolean }>;
   replayPlan: ReplayStep[];
   openLoops: string[];
@@ -51,41 +49,56 @@ const stripJsonFence = (text: string): string => {
 };
 
 const hostname = (url: string): string => {
-  try { return new URL(url).hostname; } catch { return url; }
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 };
 
 const buildDigest = (graph: BehaviorGraph): string => {
-  const pages = graph.nodes.filter((n): n is PageNode => n.kind === "page");
-  const topMotif = graph.motifs[0];
+  const pageById = new Map(
+    graph.nodes
+      .filter((n): n is PageNode => n.kind === "page")
+      .map((p) => [p.id, p]),
+  );
   const lines: string[] = [];
 
-  if (topMotif) {
-    lines.push(`Detected motif: ${topMotif.motif} (confidence ${Math.round(topMotif.confidence * 100)}%)`);
-    if (topMotif.urlTemplate) lines.push(`URL template: ${topMotif.urlTemplate}`);
-    const complete = topMotif.instances.filter(i => i.complete).map(i => i.paramValue).filter(Boolean);
-    const incomplete = topMotif.instances.filter(i => !i.complete).map(i => i.paramValue).filter(Boolean);
-    if (complete.length) lines.push(`Completed iterations: ${complete.join(", ")}`);
-    if (incomplete.length) lines.push(`Incomplete iterations: ${incomplete.join(", ")}`);
-    lines.push(`Domains visited: ${topMotif.periodDomains.join(", ")}`);
+  // Salience already ranked the noise out; show only what mattered.
+  const topScores = graph.scores.slice(0, 8);
+  if (topScores.length) {
+    lines.push("Most engaged pages (salience desc):");
+    for (const s of topScores) {
+      const title = pageById.get(s.nodeId)?.title || s.url;
+      lines.push(
+        `  - ${title} [${s.url}] — dwell ${Math.round(s.signals.dwellMs / 1000)}s, ${s.signals.visits} visit(s), ${s.signals.inputs} input(s)`,
+      );
+    }
+  }
+
+  if (graph.patterns.length) {
+    lines.push("", "Repeated patterns:");
+    for (const p of graph.patterns) {
+      const values = p.instances.map((i) => i.param).filter(Boolean);
+      lines.push(
+        `  - ${p.template} (${p.instances.length}×; values: ${values.join(", ")})`,
+      );
+    }
+  }
+
+  if (graph.openLoops.length) {
+    lines.push("", "Open loops (started, not finished):");
+    for (const l of graph.openLoops)
+      lines.push(`  - ${l.title || l.url} [${l.url}] — ${l.evidence}`);
   }
 
   // Compact domain-level breadcrumb (deduplicated consecutive)
   const domainSeq: string[] = [];
-  for (const p of pages) {
+  for (const p of pageById.values()) {
     const h = hostname(p.url);
     if (domainSeq.at(-1) !== h) domainSeq.push(h);
   }
-  lines.push("", `Domain path: ${domainSeq.join(" → ")}`);
-
-  // Meaningful page titles (unique, non-search-engine, max 10)
-  const meaningfulTitles = pages
-    .filter(p => p.title && !["google.com", "www.google.com"].includes(hostname(p.url)))
-    .map(p => p.title)
-    .filter((t, i, arr) => arr.indexOf(t) === i)
-    .slice(0, 10);
-  if (meaningfulTitles.length) {
-    lines.push("", "Key pages:", ...meaningfulTitles.map(t => `  - ${t}`));
-  }
+  if (domainSeq.length) lines.push("", `Domain path: ${domainSeq.join(" → ")}`);
 
   return lines.join("\n");
 };
@@ -107,12 +120,14 @@ export class TaskGraphCompiler {
 
     const raw = stripJsonFence(result.text);
     try {
-      const parsed = JSON.parse(raw) as Omit<TaskPacket, "id" | "graphId" | "compiledAt" | "motif">;
+      const parsed = JSON.parse(raw) as Omit<
+        TaskPacket,
+        "id" | "graphId" | "compiledAt"
+      >;
       return {
         id: randomUUID(),
         graphId: graph.id,
         compiledAt: new Date().toISOString(),
-        motif: graph.motifs[0]?.motif ?? null,
         ...parsed,
       };
     } catch (err) {
@@ -134,7 +149,9 @@ export class PacketStore {
   private load(): void {
     if (!existsSync(this.filePath)) return;
     try {
-      const packets = JSON.parse(readFileSync(this.filePath, "utf8")) as TaskPacket[];
+      const packets = JSON.parse(
+        readFileSync(this.filePath, "utf8"),
+      ) as TaskPacket[];
       for (const p of packets) this.store.set(p.id, p);
     } catch (err) {
       log.warn({ err }, "could not load packet store");
@@ -143,14 +160,26 @@ export class PacketStore {
 
   private persist(): void {
     try {
-      writeFileSync(this.filePath, JSON.stringify([...this.store.values()], null, 2));
+      writeFileSync(
+        this.filePath,
+        JSON.stringify([...this.store.values()], null, 2),
+      );
     } catch (err) {
       log.warn({ err }, "could not persist packet store");
     }
   }
 
-  save(packet: TaskPacket): void { this.store.set(packet.id, packet); this.persist(); }
-  byId(id: string): TaskPacket | null { return this.store.get(id) ?? null; }
+  save(packet: TaskPacket): void {
+    this.store.set(packet.id, packet);
+    this.persist();
+  }
+  clear(): void {
+    this.store.clear();
+    this.persist();
+  }
+  byId(id: string): TaskPacket | null {
+    return this.store.get(id) ?? null;
+  }
   byGraphId(graphId: string): TaskPacket | null {
     for (const p of this.store.values()) if (p.graphId === graphId) return p;
     return null;

@@ -48,7 +48,7 @@ Observe (read-only, cheap):
 - locateElement(description): run the local vision grounder to get an element's pixel coordinates from a plain-language description (without clicking). Use only when the target isn't in page_state.
 
 Interact (changes page state — re-read page_state after each call):
-- clickTarget(description, fallbackSelector?): PREFERRED way to click a visible target. Describe the target in plain language; a local vision model locates it on a screenshot and clicks the pixel. If you have a fresh page_state ref, pass it only as fallbackSelector.
+- clickTarget(description, fallbackSelector?): PREFERRED way to click a visible target. Describe the target in plain language; a local vision model locates it on a screenshot and clicks the pixel. If the target is a link labeled "Opens in new tab" and page_state shows an https href, use navigateToUrl(href) instead — it avoids opening a background tab you cannot read. If you have a fresh page_state ref, pass it only as fallbackSelector.
 - clickByDescription(description, fallbackSelector?): natural-language visual click alias. Prefer clickTarget when choosing a tool.
 - clickElement(selector): fallback CSS selector click. Use only for deterministic fallback, tests/debugging, or when visual grounding is unavailable/failed and you have a fresh page_state ref.
 - inputText(selector, text, submit?): type into an input/textarea/contenteditable (use the element's \`ref\` from page_state). Set submit=true for search-style fields.

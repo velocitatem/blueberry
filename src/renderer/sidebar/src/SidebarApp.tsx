@@ -37,7 +37,7 @@ const SidebarContent: React.FC = () => {
                 />
             </div>
             <div className="flex-1 min-h-0">
-                {view === 'chat' ? <Chat /> : <Workflows />}
+                {view === 'chat' ? <Chat /> : <Workflows onStarted={() => setView('chat')} />}
             </div>
         </div>
     )

@@ -27,24 +27,46 @@ export interface GraphEdge {
   to: string;
 }
 
-export type TaskMotif =
-  | "collection_loop"
-  | "research_loop"
-  | "form_transaction"
-  | "unknown";
-
-export interface MotifInstance {
-  nodeIds: string[];
-  paramValue?: string;
-  complete: boolean;
+/**
+ * Per-page engagement signals derived purely from the event stream — no
+ * site-specific or task-specific rules. Salience ranks which pages actually
+ * mattered so downstream stages can ignore noise.
+ */
+export interface NodeScore {
+  nodeId: string;
+  url: string;
+  salience: number;
+  signals: {
+    dwellMs: number;
+    visits: number;
+    inputs: number;
+    outboundDomains: number;
+  };
 }
 
-export interface MotifMatch {
-  motif: TaskMotif;
-  instances: MotifInstance[];
-  periodDomains: string[];
-  urlTemplate?: string;
+/**
+ * A repeated, parametric navigation template (e.g. `host/items/{x}`) inferred
+ * from revisits where exactly one URL segment varies while the rest stay fixed.
+ * Domain-agnostic: it describes structure, not a named workflow.
+ */
+export interface Pattern {
+  template: string;
+  domain: string;
+  instances: Array<{ nodeId: string; param?: string; engaged: boolean }>;
   confidence: number;
+}
+
+/**
+ * Engagement that did not reach closure: a page the user typed into with no
+ * subsequent navigation away. A generic structural signal of unfinished work,
+ * not a hardcoded "form" or "email" rule.
+ */
+export interface OpenLoop {
+  nodeId: string;
+  url: string;
+  title: string;
+  salience: number;
+  evidence: string;
 }
 
 export interface BehaviorGraph {
@@ -54,7 +76,9 @@ export interface BehaviorGraph {
   edges: GraphEdge[];
   entryNodeId: string | null;
   lastNodeId: string | null;
-  motifs: MotifMatch[];
+  scores: NodeScore[];
+  patterns: Pattern[];
+  openLoops: OpenLoop[];
 }
 
 export const createGraph = (): BehaviorGraph => ({
@@ -64,5 +88,7 @@ export const createGraph = (): BehaviorGraph => ({
   edges: [],
   entryNodeId: null,
   lastNodeId: null,
-  motifs: [],
+  scores: [],
+  patterns: [],
+  openLoops: [],
 });

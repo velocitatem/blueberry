@@ -46,10 +46,10 @@ export const observeTools = registerTools({
         async (tab) => ({
           text: truncate(
             (await tab.getTabText()) ?? "",
-            maxLength ?? MAX_PAGE_CONTENT_LENGTH
+            maxLength ?? MAX_PAGE_CONTENT_LENGTH,
           ),
         }),
-        "text"
+        "text",
       ),
   }),
 
@@ -99,7 +99,7 @@ export const observeTools = registerTools({
                 total += extra;
               }
               return { matches, total };
-            })()`
+            })()`,
           );
           return {
             found: (result?.matches?.length ?? 0) > 0,
@@ -107,7 +107,7 @@ export const observeTools = registerTools({
             total: result?.total ?? 0,
           };
         },
-        "found"
+        "found",
       ),
   }),
 });

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, AlertTriangle, GitBranch, Moon, Square, Sparkles } from 'lucide-react'
+import { RefreshCw, AlertTriangle, GitBranch, Moon, Square, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '@common/components/Button'
 import { cn } from '@common/lib/utils'
 
@@ -13,7 +13,8 @@ interface GraphSummaryData {
     pageCount: number
     actionCount: number
     openLoopCount: number
-    motif: string | null
+    topPattern: string | null
+    topSalientUrl: string | null
     likelyFinishAction: string | null
     startUrl: string | null
     lastUrl: string | null
@@ -28,8 +29,11 @@ const StatPill: React.FC<{ label: string; value: number | string }> = ({ label, 
 
 type Step = 'idle' | 'graph' | 'packet' | 'ready' | 'running'
 
-export const Workflows: React.FC = () => {
+type Autonomy = 'summarize' | 'prepare' | 'act'
+
+export const Workflows: React.FC<{ onStarted?: () => void }> = ({ onStarted }) => {
     const [summary, setSummary] = useState<SessionSummary | null>(null)
+    const [autonomy, setAutonomy] = useState<Autonomy>('prepare')
     const [step, setStep] = useState<Step>('idle')
     const [graphSummary, setGraphSummary] = useState<GraphSummaryData | null>(null)
     const [graphId, setGraphId] = useState<string | null>(null)
@@ -97,15 +101,26 @@ export const Workflows: React.FC = () => {
     })
 
     const handleStart = () => run(async () => {
-        const r = await window.sidebarAPI.startNightAgent(packetId ?? undefined)
+        const r = await window.sidebarAPI.startNightAgent(packetId ?? undefined, autonomy)
         if (!r.ok) { setError(r.error); return }
         setStep('running')
+        onStarted?.()
     })
 
     const handleStop = async () => {
         await window.sidebarAPI.stopNightAgent()
         setStep(packetId ? 'ready' : graphId ? 'graph' : 'idle')
     }
+
+    const handleClearData = () => run(async () => {
+        await window.sidebarAPI.clearBehaviorData()
+        setGraphSummary(null)
+        setGraphId(null)
+        setPacketGoal(null)
+        setPacketId(null)
+        setStep('idle')
+        await refreshSummary()
+    })
 
     const eventCount = summary?.eventCount ?? 0
 
@@ -121,9 +136,20 @@ export const Workflows: React.FC = () => {
                             {eventCount} events · {summary?.uniqueUrls ?? 0} pages observed
                         </p>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={refreshSummary} title="Refresh">
-                        <RefreshCw className="size-4" />
-                    </Button>
+                    <div className="flex items-center gap-0.5">
+                        <Button variant="ghost" size="icon" onClick={refreshSummary} title="Refresh">
+                            <RefreshCw className="size-4" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={handleClearData}
+                            disabled={busy}
+                            title="Clear all behavior data (events, graph, packets)"
+                        >
+                            <Trash2 className="size-4" />
+                        </Button>
+                    </div>
                 </div>
 
                 {/* Active banner */}
@@ -151,8 +177,8 @@ export const Workflows: React.FC = () => {
                             <StatPill label="pages" value={graphSummary.pageCount} />
                             <StatPill label="actions" value={graphSummary.actionCount} />
                             <StatPill label="open loops" value={graphSummary.openLoopCount} />
-                            {graphSummary.motif && (
-                                <StatPill label="motif" value={graphSummary.motif.replace('_', ' ')} />
+                            {graphSummary.topPattern && (
+                                <StatPill label="pattern" value={graphSummary.topPattern.split('/')[0]} />
                             )}
                         </div>
                         {graphSummary.likelyFinishAction && (
@@ -176,6 +202,27 @@ export const Workflows: React.FC = () => {
                     <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400 flex items-start gap-2">
                         <AlertTriangle className="size-4 mt-0.5 shrink-0" />
                         <span>{error}</span>
+                    </div>
+                )}
+
+                {/* Autonomy level — how much the night agent may do */}
+                {step !== 'running' && (
+                    <div className="flex items-center gap-1.5 text-xs">
+                        <span className="text-muted-foreground mr-0.5">Autonomy</span>
+                        {(['summarize', 'prepare', 'act'] as const).map((lvl) => (
+                            <button
+                                key={lvl}
+                                onClick={() => setAutonomy(lvl)}
+                                className={cn(
+                                    'px-2 py-1 rounded-md border capitalize transition-colors',
+                                    autonomy === lvl
+                                        ? 'border-violet-500 text-violet-600 dark:text-violet-400'
+                                        : 'border-border text-muted-foreground hover:text-foreground'
+                                )}
+                            >
+                                {lvl}
+                            </button>
+                        ))}
                     </div>
                 )}
 

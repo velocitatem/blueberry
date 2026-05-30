@@ -7,10 +7,7 @@ import {
   type TabEventKind,
 } from "./events";
 import { createLogger } from "./logger";
-import {
-  getPageStateScript,
-  type PageStateSnapshot,
-} from "./PageState";
+import { getPageStateScript, type PageStateSnapshot } from "./PageState";
 
 const log = createLogger("tab");
 
@@ -307,15 +304,34 @@ export class Tab {
   }
 
   async getTabText(): Promise<string> {
-    return await this.runJs(
-      `(() => {
+    // Prefer the page's main content region over the full document. Returning
+    // document.documentElement.innerText leads with site chrome (nav menus,
+    // tables of contents, cookie banners); after truncation the model can be
+    // left with only boilerplate and never sees the actual content, causing it
+    // to re-read/re-navigate in a loop. Fall back to the body if no main region
+    // is found.
+    return (
+      (await this.runJs(
+        `(() => {
         try {
-          return document.documentElement?.innerText ?? ''
+          const norm = (s) => (s ?? '').replace(/\\n{3,}/g, '\\n\\n').trim();
+          const pick = () =>
+            document.querySelector('main#content') ||
+            document.getElementById('mw-content-text') ||
+            document.querySelector('[role="main"]') ||
+            document.querySelector('main') ||
+            document.querySelector('article') ||
+            document.body;
+          const el = pick();
+          const text = norm(el?.innerText);
+          if (text.length < 200) return norm(document.body?.innerText);
+          return text;
         } catch {
-          return '';
+          try { return document.body?.innerText ?? ''; } catch { return ''; }
         }
-      })()`
-    ) ?? "";
+      })()`,
+      )) ?? ""
+    );
   }
 
   /**
@@ -328,7 +344,10 @@ export class Tab {
     if (!raw || typeof raw !== "object") return null;
 
     if ("error" in raw && raw.error) {
-      log.debug({ err: raw.error, tabId: this._id }, "page state extraction failed");
+      log.debug(
+        { err: raw.error, tabId: this._id },
+        "page state extraction failed",
+      );
       return null;
     }
 
@@ -352,7 +371,8 @@ export class Tab {
   }
 
   goForward(): void {
-    if (!this.webContentsView.webContents.navigationHistory.canGoForward()) return;
+    if (!this.webContentsView.webContents.navigationHistory.canGoForward())
+      return;
     this.webContentsView.webContents.navigationHistory.goForward();
   }
 

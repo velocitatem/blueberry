@@ -1,11 +1,6 @@
 import { mkdir, writeFile, appendFile } from "fs/promises";
 import { join } from "path";
-import type {
-  CoreMessage,
-  StepResult,
-  ToolSet,
-  LanguageModelUsage,
-} from "ai";
+import type { CoreMessage, StepResult, ToolSet, LanguageModelUsage } from "ai";
 import { createLogger } from "../logger";
 import { tracer } from "../tracer";
 
@@ -99,7 +94,13 @@ export const withTurnTrace = <T>(
   if (!tracer.llmobs?.enabled) return fn();
 
   return tracer.llmobs.trace(
-    { kind: "agent", name: "agent.turn", modelName: opts.modelName, modelProvider: opts.modelProvider, sessionId: opts.sessionId },
+    {
+      kind: "agent",
+      name: "agent.turn",
+      modelName: opts.modelName,
+      modelProvider: opts.modelProvider,
+      sessionId: opts.sessionId,
+    },
     () => fn(),
   ) as Promise<T>;
 };
@@ -335,6 +336,14 @@ export interface AgentConfig {
    * LLM_ATTACH_SCREENSHOT=1 (e.g. for debugging or escalation).
    */
   attachScreenshot: boolean;
+  /**
+   * Night mode safety ceilings so an unattended run always terminates: a hard
+   * step budget, a wall-clock budget, and how many identical consecutive actions
+   * the watchdog tolerates before stopping a stuck run.
+   */
+  nightStepBudget: number;
+  nightTimeBudgetMs: number;
+  nightRepeatLimit: number;
 }
 
 export const defaultAgentConfig = (): AgentConfig => ({
@@ -348,4 +357,7 @@ export const defaultAgentConfig = (): AgentConfig => ({
   debugDir: process.env.LLM_DEBUG_DIR || null,
   attachPageState: process.env.LLM_ATTACH_PAGE_STATE !== "0",
   attachScreenshot: process.env.LLM_ATTACH_SCREENSHOT === "1",
+  nightStepBudget: Number(process.env.NIGHT_STEP_BUDGET) || 60,
+  nightTimeBudgetMs: Number(process.env.NIGHT_TIME_BUDGET_MS) || 30 * 60 * 1000,
+  nightRepeatLimit: Number(process.env.NIGHT_REPEAT_LIMIT) || 4,
 });

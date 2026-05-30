@@ -26,6 +26,37 @@ const targetSchema = z.object({
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+const opensInNewTab = (
+  description: string,
+  ariaLabel?: string | null,
+): boolean =>
+  /opens in new tab/i.test(description) ||
+  /opens in new tab/i.test(ariaLabel ?? "");
+
+const httpHref = (href: unknown): string | null => {
+  if (typeof href !== "string" || !href) return null;
+  return /^https?:\/\//i.test(href) ? href : null;
+};
+
+/** After a click that spawned a tab, focus the tab that loaded the link target. */
+const focusTabForHref = async (
+  ctx: ToolContext,
+  before: ReturnType<typeof pageEvidence>,
+  href: string | null,
+): Promise<ReturnType<typeof pageEvidence>> => {
+  if (!href || !ctx.window) return pageEvidence(ctx);
+  const after = pageEvidence(ctx);
+  const spawnedTab =
+    (after.tabCount ?? 0) > (before.tabCount ?? 0) && after.url === before.url;
+  if (!spawnedTab && after.url === href) return after;
+  if (!spawnedTab) return after;
+  if (ctx.window.switchToTabWithUrl(href)) {
+    await sleep(400);
+    return pageEvidence(ctx);
+  }
+  return after;
+};
+
 const pageEvidence = (ctx: ToolContext) => {
   const tab = ctx.window?.activeTab;
   return {
@@ -131,9 +162,32 @@ const clickWithVisualGrounding = async (
     const { x, y } = normalizedToViewport(norm, viewport);
     const before = pageEvidence(ctx);
     const target = await elementAtPoint(tab, x, y);
+    const href =
+      httpHref(target?.clickable?.href) ?? httpHref(target?.element?.href);
+
+    // SERP / "Opens in new tab" links spawn background tabs and leave the agent
+    // on the search page — it then re-clicks forever. Navigate in-place when we
+    // already know the destination URL.
+    if (href && opensInNewTab(description, target?.clickable?.ariaLabel)) {
+      await tab.loadURL(href);
+      await sleep(400);
+      const after = pageEvidence(ctx);
+      return {
+        clicked: true as const,
+        method: "navigate_in_place" as const,
+        target,
+        before,
+        after,
+        transition: transitionEvidence(before, after),
+        href,
+        description,
+        note: "Navigated active tab to link href instead of opening another tab.",
+      };
+    }
+
     await tab.clickAt(x, y);
-    await sleep(300);
-    const after = pageEvidence(ctx);
+    await sleep(400);
+    const after = await focusTabForHref(ctx, before, href);
     return {
       clicked: true as const,
       method: "visual" as const,
@@ -144,6 +198,7 @@ const clickWithVisualGrounding = async (
       x,
       y,
       description,
+      ...(href ? { href } : {}),
     };
   } catch (error) {
     return {
@@ -165,8 +220,9 @@ const clickTarget = async (
 
   const before = pageEvidence(ctx);
   const fallback = await clickSelector(tab, fallbackSelector);
-  await sleep(300);
-  const after = pageEvidence(ctx);
+  await sleep(400);
+  const href = httpHref(fallback.href);
+  const after = await focusTabForHref(ctx, before, href);
   if (fallback.clicked) {
     return {
       clicked: true as const,
@@ -195,7 +251,7 @@ const clickTarget = async (
 export const groundTools = registerTools({
   clickTarget: defineTool({
     description:
-      "Preferred way to click a visible target. Describe the target in plain language; visual grounding clicks it from the current screenshot first. Provide fallbackSelector only as a fallback using a fresh page_state ref/CSS selector.",
+      'Preferred way to click a visible target. Describe the target in plain language; visual grounding clicks it from the current screenshot first. For SERP results labeled "Opens in new tab", use navigateToUrl with the href from page_state instead. Provide fallbackSelector only as a fallback using a fresh page_state ref/CSS selector.',
     inputSchema: targetSchema,
     execute: clickTarget,
   }),

@@ -80,24 +80,26 @@ const sidebarAPI = {
     electronAPI.ipcRenderer.invoke("workflow-session-summary"),
   getSessionEvents: () =>
     electronAPI.ipcRenderer.invoke("workflow-session-events"),
-  compileWorkflow: () =>
-    electronAPI.ipcRenderer.invoke("workflow-compile"),
-  clearSession: () =>
-    electronAPI.ipcRenderer.invoke("workflow-clear-session"),
+  compileWorkflow: () => electronAPI.ipcRenderer.invoke("workflow-compile"),
+  clearSession: () => electronAPI.ipcRenderer.invoke("workflow-clear-session"),
+  clearBehaviorData: () =>
+    electronAPI.ipcRenderer.invoke("workflow-clear-data"),
 
   // NightGraph
-  buildGraph: () =>
-    electronAPI.ipcRenderer.invoke("workflow-build-graph"),
+  buildGraph: () => electronAPI.ipcRenderer.invoke("workflow-build-graph"),
   getGraphSummary: () =>
     electronAPI.ipcRenderer.invoke("workflow-get-graph-summary"),
   compileTaskPacket: () =>
     electronAPI.ipcRenderer.invoke("workflow-compile-task-packet"),
-  startNightAgent: (packetId?: string) =>
-    electronAPI.ipcRenderer.invoke("workflow-start-night-agent", { packetId }),
+  startNightAgent: (packetId?: string, autonomy?: string) =>
+    electronAPI.ipcRenderer.invoke("workflow-start-night-agent", {
+      packetId,
+      autonomy,
+    }),
   stopNightAgent: () =>
     electronAPI.ipcRenderer.invoke("workflow-stop-night-agent"),
-  getAgentMode: () =>
-    electronAPI.ipcRenderer.invoke("workflow-get-agent-mode"),
+  getAgentMode: () => electronAPI.ipcRenderer.invoke("workflow-get-agent-mode"),
+  getNightStatus: () => electronAPI.ipcRenderer.invoke("workflow-night-status"),
 };
 
 // Use `contextBridge` APIs to expose Electron APIs to

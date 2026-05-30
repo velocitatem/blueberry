@@ -210,6 +210,37 @@ export class Window {
     return this.switchActiveTab(tabId);
   }
 
+  /** Focus the tab whose loaded URL best matches (e.g. after a background new-tab open). */
+  switchToTabWithUrl(url: string): boolean {
+    if (!url) return false;
+    let target: Tab | null = null;
+    for (const tab of this.allTabs) {
+      if (tab.url === url) target = tab;
+    }
+    if (!target) {
+      try {
+        const want = new URL(url);
+        for (const tab of this.allTabs) {
+          try {
+            const have = new URL(tab.url);
+            if (
+              have.hostname === want.hostname &&
+              have.pathname === want.pathname
+            ) {
+              target = tab;
+            }
+          } catch {
+            /* skip malformed tab url */
+          }
+        }
+      } catch {
+        return false;
+      }
+    }
+    if (!target || target.id === this.activeTabId) return !!target;
+    return this.switchActiveTab(target.id);
+  }
+
   getTab(tabId: string): Tab | null {
     return this.tabsMap.get(tabId) || null;
   }
