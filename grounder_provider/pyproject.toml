@@ -1,0 +1,23 @@
+[project]
+name = "grounder-provider"
+version = "0.1.0"
+description = "FastAPI provider for the local LocateAnything grounding worker"
+requires-python = ">=3.11"
+dependencies = [
+  "decord==0.6.0",
+  "fastapi",
+  "huggingface-hub",
+  "lmdb==1.7.5",
+  "numpy>=1.25.0",
+  "opencv-python-headless==4.11.0.86",
+  "peft",
+  "pillow>=11.1.0",
+  "requests",
+  "torch",
+  "torchvision",
+  "transformers==4.57.1",
+  "uvicorn[standard]",
+]
+
+[tool.uv]
+package = false
