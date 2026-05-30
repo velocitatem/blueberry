@@ -8,7 +8,7 @@ import {
 } from "./events";
 import { createLogger } from "./logger";
 import {
-  PAGE_STATE_SCRIPT,
+  getPageStateScript,
   type PageStateSnapshot,
 } from "./PageState";
 
@@ -323,12 +323,14 @@ export class Tab {
    * the per-turn page context in place of a full-resolution screenshot.
    */
   async getPageState(): Promise<PageStateSnapshot | null> {
-    const raw = await this.runJs(PAGE_STATE_SCRIPT);
+    const raw = await this.runJs(getPageStateScript());
     if (!raw || typeof raw !== "object") return null;
+
     if ("error" in raw && raw.error) {
       log.debug({ err: raw.error, tabId: this._id }, "page state extraction failed");
       return null;
     }
+
     const snapshot = raw as PageStateSnapshot;
     return {
       ...snapshot,
