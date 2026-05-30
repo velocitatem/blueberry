@@ -8,6 +8,7 @@ export class Window {
   private _baseWindow: BaseWindow;
   private tabsMap: Map<string, Tab> = new Map();
   private activeTabId: string | null = null;
+  private previousActiveTabId: string | null = null;
   private tabCounter: number = 0;
   private _topBar: TopBar;
   private _sideBar: SideBar;
@@ -154,6 +155,9 @@ export class Window {
 
     // Remove from our tabs map
     this.tabsMap.delete(tabId);
+    if (this.previousActiveTabId === tabId) {
+      this.previousActiveTabId = null;
+    }
 
     // If this was the active tab, switch to another tab
     if (this.activeTabId === tabId) {
@@ -180,6 +184,7 @@ export class Window {
 
     // Hide the currently active tab
     if (this.activeTabId && this.activeTabId !== tabId) {
+      this.previousActiveTabId = this.activeTabId;
       const currentTab = this.tabsMap.get(this.activeTabId);
       if (currentTab) {
         currentTab.hide();
@@ -194,6 +199,15 @@ export class Window {
     this._baseWindow.setTitle(tab.title || "Blueberry Browser");
 
     return true;
+  }
+
+  switchToPreviousTab(): boolean {
+    const tabId = this.previousActiveTabId;
+    if (!tabId || tabId === this.activeTabId || !this.tabsMap.has(tabId)) {
+      this.previousActiveTabId = null;
+      return false;
+    }
+    return this.switchActiveTab(tabId);
   }
 
   getTab(tabId: string): Tab | null {

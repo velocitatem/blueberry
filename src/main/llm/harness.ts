@@ -306,7 +306,21 @@ export class StepRecorder {
 }
 
 export interface AgentConfig {
+  /** Hard ceiling on total steps across the whole conversation. */
   stepLimit: number;
+  /**
+   * Ceiling on steps within a single user turn. Caps the `n` in the O(n²)
+   * context-replay cost (every step re-sends the growing transcript). Keeps a
+   * runaway turn from ballooning input tokens.
+   */
+  maxStepsPerTurn: number;
+  /**
+   * How many of the most recent tool results to keep verbatim when sending the
+   * transcript to the model. Older tool results are masked with a short stub
+   * (the tool *call* is preserved). 0 disables masking. This is the main lever
+   * against input-token growth, since tool outputs are the bulkiest content.
+   */
+  keepToolResults: number;
   temperature: number;
   debugDir: string | null;
   /**
@@ -325,6 +339,11 @@ export interface AgentConfig {
 
 export const defaultAgentConfig = (): AgentConfig => ({
   stepLimit: Number(process.env.LLM_STEP_LIMIT) || 1_000_000,
+  maxStepsPerTurn: Number(process.env.LLM_MAX_STEPS_PER_TURN) || 24,
+  keepToolResults:
+    process.env.LLM_KEEP_TOOL_RESULTS !== undefined
+      ? Number(process.env.LLM_KEEP_TOOL_RESULTS)
+      : 3,
   temperature: Number(process.env.LLM_TEMPERATURE) || 0.7,
   debugDir: process.env.LLM_DEBUG_DIR || null,
   attachPageState: process.env.LLM_ATTACH_PAGE_STATE !== "0",

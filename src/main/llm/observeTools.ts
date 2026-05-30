@@ -18,14 +18,22 @@ export const observeTools = registerTools({
 
   getPageState: defineTool({
     description:
-      "Get a fresh structured snapshot of the active page: URL/title/scroll plus the interactive elements currently visible in the viewport (id, role, accessible name, pixel bbox, enabled/checked state, and a `ref` CSS selector). Use this instead of a screenshot to decide what to click/type, and to refresh your view after the page changes. Act on an element by passing its `ref` to clickElement/inputText.",
+      "Force-refresh the structured page_state (visible interactive elements with ids, roles, names, bboxes, and `ref` selectors). NOTE: a fresh page_state is already attached automatically as the most recent message on every step (and after every action), so you normally do NOT need this — call it only if you suspect the page changed without a tool action of yours.",
     inputSchema: z.object({}),
-    execute: (_input, ctx) =>
-      withActiveTab(
-        ctx,
-        async (tab) => ({ state: await tab.getPageState() }),
-        "state"
-      ),
+    execute: async (_input, ctx) => {
+      const tab = ctx.window?.activeTab;
+      if (!tab) return { refreshed: false as const, error: "No active tab" };
+      // When page_state is auto-injected each step, returning the full snapshot
+      // here would duplicate a multi-KB blob into the transcript. Just ack; the
+      // calling harness re-attaches the fresh snapshot on the next step.
+      if (process.env.LLM_ATTACH_PAGE_STATE !== "0") {
+        return {
+          refreshed: true as const,
+          note: "Latest page_state is attached as the most recent message.",
+        };
+      }
+      return { refreshed: true as const, state: await tab.getPageState() };
+    },
   }),
 
   getPageText: defineTool({

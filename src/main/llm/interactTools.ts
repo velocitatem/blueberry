@@ -34,10 +34,18 @@ export const interactTools = registerTools({
       withActiveTab(
         ctx,
         async (tab) => {
-          if (!tab.webContents.navigationHistory.canGoBack())
+          if (!tab.webContents.navigationHistory.canGoBack()) {
+            if (ctx.window?.switchToPreviousTab()) {
+              return {
+                wentBack: true as const,
+                switchedToPreviousTab: true,
+                url: ctx.window.activeTab?.url ?? null,
+              };
+            }
             return { wentBack: false as const, reason: "no_history" };
+          }
           tab.goBack();
-          return { wentBack: true as const, url: tab.url };
+          return { wentBack: true as const, switchedToPreviousTab: false, url: tab.url };
         },
         "wentBack"
       ),

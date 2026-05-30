@@ -7,7 +7,7 @@
  * accessible name, viewport bbox, and enabled/checked state. This is close to an
  * "interactive accessibility snapshot" and is far cheaper than pixels while
  * keeping enough state for planning. Screenshots are reserved for on-demand
- * visual grounding (clickByDescription / locateElement).
+ * visual grounding (clickTarget / clickByDescription / locateElement).
  */
 
 export interface PageStateElement {
@@ -25,7 +25,7 @@ export interface PageStateElement {
   checked?: boolean;
   /** Short current value for inputs/textareas (if any). */
   value?: string;
-  /** CSS selector to act on this exact element via clickElement/inputText. */
+  /** CSS selector fallback for this exact element via clickTarget/clickElement/inputText. */
   ref: string;
 }
 
@@ -202,7 +202,7 @@ export const serializePageState = (s: PageStateSnapshot): string => {
   lines.push("<page_state>");
   lines.push(
     "Structured state of the active page (interactive, in-viewport elements only; bbox is viewport-relative pixels [x,y,w,h]). " +
-      "To act on an element, pass its `ref` selector to clickElement/inputText. " +
+      "To click an element, prefer clickTarget with a plain-language description and pass `ref` only as fallbackSelector. Use `ref` directly for inputText. " +
       "ids/refs/bboxes are valid only for this snapshot — call getPageState to refresh after the page changes.",
   );
   lines.push(
@@ -214,7 +214,9 @@ export const serializePageState = (s: PageStateSnapshot): string => {
       viewport: s.viewport,
     })}`,
   );
-  lines.push(`ui_state: ${JSON.stringify({ dialog: s.dialog, focused: s.focused })}`);
+  lines.push(
+    `ui_state: ${JSON.stringify({ dialog: s.dialog, focused: s.focused })}`,
+  );
   lines.push(
     `visible_elements (${s.elements.length}${s.truncated ? "+, truncated" : ""}):`,
   );
