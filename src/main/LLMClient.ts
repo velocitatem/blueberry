@@ -1,4 +1,3 @@
-import { WebContents } from "electron";
 import {
   streamText,
   stepCountIs,
@@ -10,11 +9,18 @@ import {
 } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
+import type { WebContents } from "electron";
 import * as dotenv from "dotenv";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import type { Window } from "./Window";
-import { createTools, filterTools, INTERACT_TOOL_NAMES } from "./llm";
+import {
+  createTools,
+  filterTools,
+  INTERACT_TOOL_NAMES,
+  GROUND_TOOL_NAMES,
+} from "./llm";
+import { createGrounder, type Grounder } from "./grounding";
 import { createLogger } from "./logger";
 import {
   LimitsExceeded,
@@ -54,12 +60,20 @@ const DEFAULT_MODELS: Record<LLMProvider, string> = {
 };
 
 const resolveProvider = (): LLMProvider =>
-  process.env.LLM_PROVIDER?.toLowerCase() === "anthropic" ? "anthropic" : "openai";
+  process.env.LLM_PROVIDER?.toLowerCase() === "anthropic"
+    ? "anthropic"
+    : "openai";
 
 const apiKeyFor = (p: LLMProvider): string | undefined =>
   process.env[p === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"];
 
-const buildSystemPrompt = (url: string | null, title: string | null): string => {
+const supportsTemperature = (modelName: string): boolean =>
+  !/^(o\d|gpt-5)/i.test(modelName);
+
+const buildSystemPrompt = (
+  url: string | null,
+  title: string | null,
+): string => {
   const pageContext = `
 <page_context>
 Current URL: ${url || "(no active tab)"}
@@ -70,7 +84,7 @@ ${title ? `Current page title: ${title}\n` : ""}</page_context>`.trim();
 You are an AI assistant embedded in a desktop web browser. You operate in an iterative tool-use loop to help the user accomplish tasks on the active tab.
 You excel at:
 1. Navigating websites and extracting precise information from the page the user is looking at.
-2. Reading page content (text and HTML) to answer questions grounded in what is actually on screen.
+2. Reading the visible page text to answer questions grounded in what is actually on screen.
 3. Driving the active tab via tools when fresh data or a navigation is required.
 4. Operating efficiently across multiple reasoning + tool steps without losing track of the goal.
 </role>
@@ -92,11 +106,12 @@ You have two families of tools. Default to interacting with the page the user is
 Observe (read-only, cheap):
 - getCurrentUrl: read the URL of the active tab.
 - getPageText: read the visible text of the active page. Use when the screenshot is insufficient or you need to quote exact text.
-- getPageHtml: read the HTML source. Use to find selectors, attributes, or structure not visible in text.
 - searchPage: find a substring in the page text with surrounding context. Prefer this over getPageText when looking for something specific.
+- locateElement(description): find an on-screen element by plain-language description and get its pixel coordinates (without clicking).
 
 Interact (changes page state — verify the result after each call):
-- clickElement(selector): click a link, button, or control by CSS selector.
+- clickByDescription(description): click an element you can see in the screenshot, described in plain language (e.g. "the blue Sign in button"). PREFER this for clicking — no CSS selector needed.
+- clickElement(selector): click by CSS selector. Use only as a fallback when clickByDescription fails or returns grounding_unavailable.
 - inputText(selector, text, submit?): type into an input/textarea/contenteditable. Set submit=true for search-style fields.
 - pressKey(key): send Enter/Tab/Escape/Arrow keys to the focused element.
 - scrollPage({direction|selector, amount?}): scroll the window or bring an element into view.
@@ -105,9 +120,9 @@ Interact (changes page state — verify the result after each call):
 
 Rules:
 - Prefer the screenshot and page_context for simple visual questions. Call a tool only when you need more or fresher data.
-- Strongly prefer interacting with the current page (click links, fill forms, scroll, press keys) over re-navigating. Use the screenshot to find what to click, then call clickElement / inputText.
+- Strongly prefer interacting with the current page (click links, fill forms, scroll, press keys) over re-navigating. Use the screenshot to find what to click, then call clickByDescription (or clickElement as a fallback).
 - Use navigateToUrl only when (a) the user explicitly gave a URL, (b) no on-page link or control reaches the destination, or (c) you need a known direct URL (e.g. a search engine) to start a task. Do NOT re-navigate to the current URL or guess URL patterns when a visible link or button would do the same thing.
-- To find a selector when the screenshot isn't enough: call getPageHtml (or searchPage for nearby text) once, then act. Don't loop on reads.
+- To click something you can see, describe it to clickByDescription rather than hunting for a selector. Use searchPage for nearby text only when you need exact strings. Don't loop on reads.
 - After every interact call, re-check via the next screenshot or a quick observe call before chaining more actions. The page may have changed in ways you didn't predict.
 - Tool outputs may be truncated; ask for a larger maxLength only when needed.
 - Do not call the same tool with the same arguments repeatedly — it wastes turns. If something fails twice, change approach or report the blocker.
@@ -137,11 +152,12 @@ Before declaring a task done, re-read the user's request and check that every co
 };
 
 export class LLMClient {
-  private readonly webContents: WebContents;
   private window: Window | null = null;
   private readonly provider: LLMProvider;
   private readonly modelName: string;
   private readonly model: LanguageModel | null;
+  private readonly webContents: WebContents;
+  private readonly grounder: Grounder | null;
   private readonly config: AgentConfig;
   private readonly usage = new UsageTracker();
   private messages: CoreMessage[] = [];
@@ -156,6 +172,7 @@ export class LLMClient {
     this.provider = resolveProvider();
     this.modelName = process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
     this.model = this.initModel();
+    this.grounder = createGrounder(webContents);
     this.config = defaultAgentConfig();
     this.recorder = this.config.debugDir
       ? new StepRecorder(join(this.config.debugDir, `run-${randomUUID()}`))
@@ -234,13 +251,21 @@ export class LLMClient {
   private logInit(): void {
     if (this.model) {
       log.info(
-        { provider: this.provider, model: this.modelName, debug: !!this.recorder },
+        {
+          provider: this.provider,
+          model: this.modelName,
+          debug: !!this.recorder,
+        },
         "LLM client initialized",
       );
       return;
     }
-    const key = this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
-    log.error({ provider: this.provider, key }, "LLM init failed: missing API key");
+    const key =
+      this.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+    log.error(
+      { provider: this.provider, key },
+      "LLM init failed: missing API key",
+    );
   }
 
   private async appendUserMessage(text: string): Promise<void> {
@@ -285,7 +310,7 @@ export class LLMClient {
 
     let systemPrompt = buildSystemPrompt(url, title);
     let messages = this.messages;
-    let tools = createTools({ window: this.window });
+    let tools = createTools({ window: this.window, grounder: this.grounder });
 
     if (this.mode === "night" && this.activePacketId && this.nightHarness) {
       const harnessCtx = this.nightHarness.buildContext({
@@ -299,8 +324,6 @@ export class LLMClient {
       }
     }
 
-    const isReasoningModel = /^o\d/i.test(this.modelName);
-
     await withTurnTrace(
       { modelName: this.modelName, modelProvider: this.provider },
       async () => {
@@ -313,15 +336,21 @@ export class LLMClient {
               tools,
               toolChoice: this.mode === "night" ? "required" : "auto",
               stopWhen: stepCountIs(remaining),
-              ...(isReasoningModel ? {} : { temperature: this.config.temperature }),
+              ...(supportsTemperature(this.modelName)
+                ? { temperature: this.config.temperature }
+                : {}),
               maxRetries: 3,
               prepareStep: this.config.attachScreenshot
                 ? async ({ steps, messages: stepMessages }) => {
                     const last = steps[steps.length - 1];
                     if (!last) return undefined;
-                    const usedInteract = (last.toolCalls ?? []).some((c) =>
-                      INTERACT_TOOL_NAMES.has((c as { toolName: string }).toolName),
-                    );
+                    const usedInteract = (last.toolCalls ?? []).some((c) => {
+                      const name = (c as { toolName: string }).toolName;
+                      return (
+                        INTERACT_TOOL_NAMES.has(name) ||
+                        GROUND_TOOL_NAMES.has(name)
+                      );
+                    });
                     if (!usedInteract) return undefined;
                     await new Promise((r) => setTimeout(r, 250));
                     const shot = await this.captureScreenshot();

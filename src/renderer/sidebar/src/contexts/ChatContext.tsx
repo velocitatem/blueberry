@@ -20,7 +20,6 @@ interface ChatContextType {
     clearChat: () => void
 
     // Page content access
-    getPageContent: () => Promise<string | null>
     getPageText: () => Promise<string | null>
     getCurrentUrl: () => Promise<string | null>
 }
@@ -109,15 +108,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [])
 
-    const getPageContent = useCallback(async () => {
-        try {
-            return await window.sidebarAPI.getPageContent()
-        } catch (error) {
-            log.error({ err: error }, 'Failed to get page content')
-            return null
-        }
-    }, [])
-
     const getPageText = useCallback(async () => {
         try {
             return await window.sidebarAPI.getPageText()
@@ -164,7 +154,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         sendMessage,
         clearChat,
-        getPageContent,
         getPageText,
         getCurrentUrl
     }

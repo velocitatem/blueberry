@@ -17,6 +17,22 @@ interface ChatResponse {
   isComplete: boolean;
 }
 
+interface GroundRequest {
+  id: string;
+  imageDataUrl: string;
+  description: string;
+  output: "box" | "point";
+}
+
+interface GroundResultMessage {
+  id: string;
+  result: {
+    point?: { x: number; y: number };
+    box?: { x1: number; y1: number; x2: number; y2: number };
+  } | null;
+  error?: string;
+}
+
 // Sidebar specific APIs
 const sidebarAPI = {
   // Chat functionality
@@ -45,8 +61,14 @@ const sidebarAPI = {
     electronAPI.ipcRenderer.removeAllListeners("chat-messages-updated");
   },
 
+  // Visual grounding (runs in this renderer via WebGPU)
+  onGroundRequest: (callback: (req: GroundRequest) => void) => {
+    electronAPI.ipcRenderer.on("ground:request", (_, req) => callback(req));
+  },
+  sendGroundResult: (payload: GroundResultMessage) =>
+    electronAPI.ipcRenderer.send("ground:result", payload),
+
   // Page content access
-  getPageContent: () => electronAPI.ipcRenderer.invoke("get-page-content"),
   getPageText: () => electronAPI.ipcRenderer.invoke("get-page-text"),
   getCurrentUrl: () => electronAPI.ipcRenderer.invoke("get-current-url"),
 

@@ -301,18 +301,6 @@ export class Tab {
     return await this.webContentsView.webContents.executeJavaScript(code);
   }
 
-  async getTabHtml(): Promise<string> {
-    return await this.runJs(
-      `(() => {
-        try {
-          return document.documentElement?.outerHTML ?? '';
-        } catch {
-          return '';
-        }
-      })()`
-    ) ?? "";
-  }
-
   async getTabText(): Promise<string> {
     return await this.runJs(
       `(() => {

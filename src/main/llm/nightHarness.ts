@@ -94,7 +94,7 @@ const motifToolPriority = (motif: MotifMatch | null): string[] => {
   switch (motif.motif) {
     case "collection_loop": return ["navigateToUrl", "getPageText", "inputText", "clickElement"];
     case "research_loop":   return ["getPageText", "searchPage", "navigateToUrl"];
-    case "form_transaction": return ["inputText", "clickElement", "getPageHtml"];
+    case "form_transaction": return ["inputText", "clickElement", "clickByDescription"];
     default: return ["getPageText", "navigateToUrl", "clickElement"];
   }
 };

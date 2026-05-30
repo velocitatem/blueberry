@@ -116,6 +116,9 @@ logs/
 
 # Cache directories
 .cache/
+grounder_provider/.cache/
+grounder_provider/.venv/
+grounder_provider/models/
 .parcel-cache/
 .next/
 .nuxt/

@@ -16,6 +16,24 @@ interface ChatResponse {
   isComplete: boolean;
 }
 
+interface GroundRequest {
+  id: string;
+  imageDataUrl: string;
+  description: string;
+  output: "box" | "point";
+}
+
+interface GroundResult {
+  point?: { x: number; y: number };
+  box?: { x1: number; y1: number; x2: number; y2: number };
+}
+
+interface GroundResultMessage {
+  id: string;
+  result: GroundResult | null;
+  error?: string;
+}
+
 interface TabInfo {
   id: string;
   title: string;
@@ -85,9 +103,12 @@ interface SidebarAPI {
   removeChatResponseListener: () => void;
 
   // Page content access
-  getPageContent: () => Promise<string | null>;
   getPageText: () => Promise<string | null>;
   getCurrentUrl: () => Promise<string | null>;
+
+  // Visual grounding (runs in this renderer via WebGPU)
+  onGroundRequest: (callback: (req: GroundRequest) => void) => void;
+  sendGroundResult: (payload: GroundResultMessage) => void;
 
   // Tab information
   getActiveTabInfo: () => Promise<TabInfo | null>;

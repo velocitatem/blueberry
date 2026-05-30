@@ -33,23 +33,6 @@ export const observeTools = registerTools({
       ),
   }),
 
-  getPageHtml: defineTool({
-    description:
-      "Get the HTML source of the active page. Use for structure or attributes not visible in plain text.",
-    inputSchema: maxLengthSchema,
-    execute: ({ maxLength }, ctx) =>
-      withActiveTab(
-        ctx,
-        async (tab) => ({
-          html: truncate(
-            (await tab.getTabHtml()) ?? "",
-            maxLength ?? MAX_PAGE_CONTENT_LENGTH
-          ),
-        }),
-        "html"
-      ),
-  }),
-
   searchPage: defineTool({
     description:
       "Search the active page's visible text for a query string and return matches with surrounding context. Case-insensitive. Prefer this over getPageText when looking for a specific string.",
