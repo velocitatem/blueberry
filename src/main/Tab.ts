@@ -211,7 +211,8 @@ export class Tab {
   }
 
   get url(): string {
-    return this._url;
+    const url = this.webContentsView.webContents.getURL();
+    return url && url !== "about:blank" ? url : this._url;
   }
 
   get isVisible(): boolean {
@@ -332,9 +333,10 @@ export class Tab {
     }
 
     const snapshot = raw as PageStateSnapshot;
+    const currentUrl = this.webContentsView.webContents.getURL();
     return {
       ...snapshot,
-      url: this._url || snapshot.url,
+      url: snapshot.url || currentUrl || this._url,
       title: this._title || snapshot.title,
     };
   }
