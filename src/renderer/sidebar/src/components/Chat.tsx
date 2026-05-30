@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
+import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import { ArrowUp, Square, Sparkles, Plus } from 'lucide-react'
+import { ArrowUp, Plus } from 'lucide-react'
+import spinnerSvg from '../../../../../resources/spinner.svg?raw'
 import { useChat } from '../contexts/ChatContext'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
@@ -46,73 +48,80 @@ const UserMessage: React.FC<{ content: string }> = ({ content }) => (
     </div>
 )
 
-// Streaming Text Component
-const StreamingText: React.FC<{ content: string }> = ({ content }) => {
-    const [displayedContent, setDisplayedContent] = useState('')
-    const [currentIndex, setCurrentIndex] = useState(0)
+const markdownProseClassName = cn(
+    'prose prose-sm dark:prose-invert max-w-none',
+    'prose-headings:text-foreground prose-p:text-foreground prose-p:leading-relaxed',
+    'prose-strong:text-foreground prose-ul:text-foreground prose-ol:text-foreground prose-li:text-foreground',
+    'prose-blockquote:border-l-primary/40 prose-blockquote:text-muted-foreground',
+    'prose-a:text-primary hover:prose-a:underline',
+    'prose-code:before:content-none prose-code:after:content-none',
+    'prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:text-foreground',
+    'prose-pre:bg-muted dark:prose-pre:bg-muted/50 prose-pre:p-0 prose-pre:rounded-lg prose-pre:overflow-hidden',
+    'prose-pre:code:bg-transparent prose-pre:code:p-3 prose-pre:code:block prose-pre:code:overflow-x-auto',
+    'prose-th:text-foreground prose-td:text-foreground',
+)
 
-    useEffect(() => {
-        if (currentIndex < content.length) {
-            const timer = setTimeout(() => {
-                setDisplayedContent(content.slice(0, currentIndex + 1))
-                setCurrentIndex(currentIndex + 1)
-            }, 10)
-            return () => clearTimeout(timer)
+const markdownComponents: Components = {
+    a: ({ children, href }) => (
+        <a
+            href={href}
+            className="text-primary hover:underline"
+            target="_blank"
+            rel="noopener noreferrer"
+        >
+            {children}
+        </a>
+    ),
+    code: ({ className, children, ...props }) => {
+        const isBlock = Boolean(className)
+
+        if (isBlock) {
+            return (
+                <code className={cn('block overflow-x-auto p-3 text-sm', className)} {...props}>
+                    {children}
+                </code>
+            )
         }
-    }, [content, currentIndex])
 
-    return (
-        <div className="whitespace-pre-wrap text-foreground">
-            {displayedContent}
-            {currentIndex < content.length && (
-                <span className="inline-block w-2 h-5 bg-primary/60 dark:bg-primary/40 ml-0.5 animate-pulse" />
-            )}
+        return (
+            <code
+                className="rounded bg-muted px-1.5 py-0.5 text-sm text-foreground dark:bg-muted/50"
+                {...props}
+            >
+                {children}
+            </code>
+        )
+    },
+    pre: ({ children }) => (
+        <pre className="my-3 overflow-hidden rounded-lg bg-muted dark:bg-muted/50">
+            {children}
+        </pre>
+    ),
+    table: ({ children, ...props }) => (
+        <div className="my-4 overflow-x-auto">
+            <table {...props}>{children}</table>
         </div>
-    )
+    ),
 }
 
 // Markdown Renderer Component
-const Markdown: React.FC<{ content: string }> = ({ content }) => (
-    <div className="prose prose-sm dark:prose-invert max-w-none 
-                    prose-headings:text-foreground prose-p:text-foreground 
-                    prose-strong:text-foreground prose-ul:text-foreground 
-                    prose-ol:text-foreground prose-li:text-foreground
-                    prose-a:text-primary hover:prose-a:underline
-                    prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 
-                    prose-code:rounded prose-code:text-sm prose-code:text-foreground
-                    prose-pre:bg-muted dark:prose-pre:bg-muted/50 prose-pre:p-3 
-                    prose-pre:rounded-lg prose-pre:overflow-x-auto">
+const Markdown: React.FC<{ content: string; isStreaming?: boolean }> = ({
+    content,
+    isStreaming,
+}) => (
+    <div className={markdownProseClassName}>
         <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkBreaks]}
-            components={{
-                // Custom code block styling
-                code: ({ node, className, children, ...props }) => {
-                    const inline = !className
-                    return inline ? (
-                        <code className="bg-muted dark:bg-muted/50 px-1 py-0.5 rounded text-sm text-foreground" {...props}>
-                            {children}
-                        </code>
-                    ) : (
-                        <code className={className} {...props}>
-                            {children}
-                        </code>
-                    )
-                },
-                // Custom link styling
-                a: ({ children, href }) => (
-                    <a
-                        href={href}
-                        className="text-primary hover:underline"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                    >
-                        {children}
-                    </a>
-                ),
-            }}
+            components={markdownComponents}
         >
             {content}
         </ReactMarkdown>
+        {isStreaming && (
+            <span
+                className="ml-0.5 inline-block h-4 w-2 animate-pulse bg-primary/60 dark:bg-primary/40"
+                aria-hidden
+            />
+        )}
     </div>
 )
 
@@ -123,16 +132,12 @@ const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = (
 }) => (
     <div className="relative w-full animate-fade-in">
         <div className="py-1">
-            {isStreaming ? (
-                <StreamingText content={content} />
-            ) : (
-                <Markdown content={content} />
-            )}
+            <Markdown content={content} isStreaming={isStreaming} />
         </div>
     </div>
 )
 
-// Loading Indicator with spinning star
+// Loading indicator — animated blueberries from resources/spinner.svg
 const LoadingIndicator: React.FC = () => {
     const [isVisible, setIsVisible] = useState(false)
 
@@ -141,11 +146,18 @@ const LoadingIndicator: React.FC = () => {
     }, [])
 
     return (
-        <div className={cn(
-            "transition-transform duration-300 ease-in-out",
-            isVisible ? "scale-100" : "scale-0"
-        )}>
-            ...
+        <div
+            className={cn(
+                "transition-transform duration-300 ease-in-out",
+                isVisible ? "scale-100" : "scale-0"
+            )}
+            role="status"
+            aria-label="Loading"
+        >
+            <div
+                className="size-12 [&>svg]:size-full [&>svg]:block"
+                dangerouslySetInnerHTML={{ __html: spinnerSvg }}
+            />
         </div>
     )
 }
@@ -244,13 +256,14 @@ interface ConversationTurn {
 const ConversationTurnComponent: React.FC<{
     turn: ConversationTurn
     isLoading?: boolean
-}> = ({ turn, isLoading }) => (
+    isStreaming?: boolean
+}> = ({ turn, isLoading, isStreaming }) => (
     <div className="pt-12 flex flex-col gap-8">
         {turn.user && <UserMessage content={turn.user.content} />}
         {turn.assistant && (
             <AssistantMessage
                 content={turn.assistant.content}
-                isStreaming={turn.assistant.isStreaming}
+                isStreaming={isStreaming}
             />
         )}
         {isLoading && (
@@ -327,6 +340,11 @@ export const Chat: React.FC = () => {
                                     turn={turn}
                                     isLoading={
                                         showLoadingAfterLastTurn &&
+                                        index === conversationTurns.length - 1
+                                    }
+                                    isStreaming={
+                                        isLoading &&
+                                        !!turn.assistant &&
                                         index === conversationTurns.length - 1
                                     }
                                 />

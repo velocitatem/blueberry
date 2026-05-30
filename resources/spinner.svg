@@ -1,0 +1,39 @@
+<svg width="200" height="200" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <g id="blueberry">
+      <circle cx="0" cy="0" r="14" fill="#4159af" />
+      <circle cx="-3" cy="-3" r="12" fill="#4d6cd4" opacity="0.8" />
+      
+      <g transform="translate(6, -6) scale(0.8)">
+        <path d="M -4,-2 C -6,-6 -2,-7 0,-4 C 2,-7 6,-6 4,-2 C 7,0 6,4 2,3 C 0,6 -4,5 -3,1 C -6,2 -7,-2 -4,-2 Z" fill="#7593f5" />
+        <circle cx="0" cy="0" r="2.5" fill="#293b75" />
+      </g>
+    </g>
+
+    <style>
+      @keyframes blueberry-motion {
+        0%, 100%   { transform: translate(25px, 25px); }
+        8.33%      { transform: translate(75px, 25px); }
+        25%        { transform: translate(75px, 25px); }
+        33.3%      { transform: translate(75px, 75px); }
+        50%        { transform: translate(75px, 75px); }
+        58.33%     { transform: translate(25px, 75px); }
+        75%        { transform: translate(25px, 75px); }
+        83.33%     { transform: translate(25px, 25px); }
+      }
+
+      .berry {
+        animation: blueberry-motion 2.4s linear infinite;
+      }
+      
+      /* Staggered delays to match the original layout */
+      .b1 { animation-delay: -2.4s; }
+      .b2 { animation-delay: -1.6s; }
+      .b3 { animation-delay: -0.8s; }
+    </style>
+  </defs>
+
+  <use href="#blueberry" class="berry b1" />
+  <use href="#blueberry" class="berry b2" />
+  <use href="#blueberry" class="berry b3" />
+</svg>

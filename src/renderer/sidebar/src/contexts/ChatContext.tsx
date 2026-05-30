@@ -85,16 +85,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const messageId = Date.now().toString()
 
-            // Send message to main process (which will handle context)
             await window.sidebarAPI.sendChatMessage({
                 message: content,
                 messageId: messageId
             })
-
-            // Messages will be updated via the chat-messages-updated event
         } catch (error) {
             log.error({ err: error }, 'Failed to send message')
-        } finally {
             setIsLoading(false)
         }
     }, [])
