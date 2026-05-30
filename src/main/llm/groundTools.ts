@@ -23,6 +23,57 @@ const targetSchema = z.object({
     ),
 });
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const pageEvidence = (ctx: ToolContext) => {
+  const tab = ctx.window?.activeTab;
+  return {
+    tabId: tab?.id ?? null,
+    url: tab?.url ?? null,
+    title: tab?.title ?? null,
+    tabCount: ctx.window?.tabCount ?? null,
+  };
+};
+
+const transitionEvidence = (
+  before: ReturnType<typeof pageEvidence>,
+  after: ReturnType<typeof pageEvidence>,
+) => ({
+  urlChanged: before.url !== after.url,
+  tabChanged: before.tabId !== after.tabId,
+  tabCountChanged: before.tabCount !== after.tabCount,
+});
+
+const elementAtPoint = async (tab: ActiveTab, x: number, y: number) => {
+  return await tab.runJs(
+    `(() => {
+      const x = ${JSON.stringify(x)};
+      const y = ${JSON.stringify(y)};
+      const describe = (el) => {
+        if (!el || el.nodeType !== 1) return null;
+        const r = el.getBoundingClientRect?.();
+        return {
+          tag: el.tagName?.toLowerCase?.() ?? null,
+          id: el.id || null,
+          role: el.getAttribute?.('role') || null,
+          ariaLabel: el.getAttribute?.('aria-label') || null,
+          text: (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim().slice(0, 160) || null,
+          href: el.href || el.getAttribute?.('href') || null,
+          bbox: r ? [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] : null,
+        };
+      };
+      const element = document.elementFromPoint(x, y);
+      const clickable = element?.closest?.('a, button, [role=button], [role=link], input[type=submit], input[type=button]') ?? element;
+      return {
+        point: { x, y },
+        element: describe(element),
+        clickable: describe(clickable),
+      };
+    })()`,
+  );
+};
+
 const clickSelector = async (tab: ActiveTab, selector: string) => {
   const result = await tab.runJs(
     `(() => {
@@ -40,6 +91,7 @@ const clickSelector = async (tab: ActiveTab, selector: string) => {
         count: all.length,
         tag: visible.tagName?.toLowerCase?.() ?? null,
         text: (visible.innerText || visible.value || '').slice(0, 120) || null,
+        href: visible.href || visible.getAttribute?.('href') || null,
       };
     })()`,
   );
@@ -77,10 +129,18 @@ const clickWithVisualGrounding = async (
     }
     const viewport = await tab.viewportSize();
     const { x, y } = normalizedToViewport(norm, viewport);
+    const before = pageEvidence(ctx);
+    const target = await elementAtPoint(tab, x, y);
     await tab.clickAt(x, y);
+    await sleep(300);
+    const after = pageEvidence(ctx);
     return {
       clicked: true as const,
       method: "visual" as const,
+      target,
+      before,
+      after,
+      transition: transitionEvidence(before, after),
       x,
       y,
       description,
@@ -103,11 +163,18 @@ const clickTarget = async (
   const tab = ctx.window?.activeTab;
   if (!fallbackSelector || !tab) return visual;
 
+  const before = pageEvidence(ctx);
   const fallback = await clickSelector(tab, fallbackSelector);
+  await sleep(300);
+  const after = pageEvidence(ctx);
   if (fallback.clicked) {
     return {
       clicked: true as const,
       method: "selector_fallback" as const,
+      target: fallback,
+      before,
+      after,
+      transition: transitionEvidence(before, after),
       description,
       fallbackSelector,
       visualFailure: "error" in visual ? visual.error : visual.reason,

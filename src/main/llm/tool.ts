@@ -63,7 +63,7 @@ export const registerTools = <T extends ToolDefs>(defs: T): T => {
 };
 
 /** Compact, log-safe preview of a tool input/result. */
-const preview = (value: unknown, max = 220): string => {
+const preview = (value: unknown, max = 600): string => {
   if (value === undefined || value === null) return "";
   let s: string;
   if (typeof value === "string") s = value;
