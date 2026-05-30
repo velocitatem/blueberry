@@ -62,22 +62,14 @@ export const registerTools = <T extends ToolDefs>(defs: T): T => {
   return defs;
 };
 
-/** Compact, log-safe preview of a tool input/result. */
-const preview = (value: unknown, max = 600): string => {
-  if (value === undefined || value === null) return "";
+const preview = (v: unknown, m = 600): string => {
+  if (v == null) return "";
   let s: string;
-  if (typeof value === "string") s = value;
-  else {
-    try {
-      s = JSON.stringify(value);
-    } catch {
-      s = String(value);
-    }
-  }
-  return s.length <= max ? s : `${s.slice(0, max)}…(+${s.length - max})`;
+  if (typeof v === "string") s = v;
+  else try { s = JSON.stringify(v); } catch { s = String(v); }
+  return s.length <= m ? s : `${s.slice(0, m)}...(+${s.length - m})`;
 };
 
-/** A result is a failure when it carries an `error`/`reason` field. */
 const resultFailed = (r: unknown): boolean => {
   if (!r || typeof r !== "object") return false;
   const o = r as Record<string, unknown>;
@@ -93,23 +85,16 @@ const buildTool = (
   inputSchema: def.inputSchema,
   execute: async (input) => {
     const startedAt = Date.now();
-    log.info({ tool: name, input: preview(input) }, `tool:call ${name}`);
+    log.info({ tool: name, input: preview(input) }, `tool:call ${name}`); // call back to otehr logging maybe
     try {
-      const result = await def.execute(input, ctx);
+      const result = await def.execute(input, ctx); // actually execute the tool
       const ms = Date.now() - startedAt;
       const meta = { tool: name, ms, result: preview(result) };
       if (resultFailed(result)) log.warn(meta, `tool:fail ${name}`);
       else log.info(meta, `tool:ok ${name}`);
       return result;
     } catch (error) {
-      log.error(
-        {
-          tool: name,
-          ms: Date.now() - startedAt,
-          err: error instanceof Error ? error.message : String(error),
-        },
-        `tool:error ${name}`
-      );
+      log.error({ tool: name, ms: Date.now() - startedAt, err: error instanceof Error ? error.message : String(error) }, `tool:error ${name}`); // call back to other logging maybe
       throw error;
     }
   },
@@ -121,11 +106,8 @@ export const createTools = (ctx: ToolContext): ToolSet =>
   );
 
 export type ToolPolicy = {
-  /** Tool names to include. If empty or undefined, all tools are included. */
   allow?: string[];
-  /** Tool names to exclude. Applied after allow. */
   deny?: string[];
-  /** Re-ranking hints: names moved to front of the toolset. */
   prioritize?: string[];
 };
 

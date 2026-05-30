@@ -47,6 +47,12 @@ export class GraphStore {
     this.persist();
   }
 
+  clear(): void {
+    this.store.clear();
+    this.activeId = null;
+    this.persist();
+  }
+
   byId(id: string): BehaviorGraph | null {
     return this.store.get(id) ?? null;
   }

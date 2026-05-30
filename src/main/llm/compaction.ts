@@ -1,38 +1,16 @@
 import type { CoreMessage } from "ai";
 
-/**
- * Context compaction via tool-result masking ("observation masking").
- *
- * Tool outputs are by far the bulkiest content in an agent transcript (a single
- * page_state or page-text result is 1–5 KB), and every step of every turn
- * re-sends the entire growing transcript — so unbounded tool results make input
- * tokens grow roughly O(n²) in the number of steps.
- *
- * We keep only the most recent `keepLast` tool results verbatim and replace the
- * output of older ones with a short stub, while preserving the tool *call*
- * record (role/toolCallId/toolName). The agent still sees that a call was made
- * and can re-run it if it needs the data again. This is a free, no-LLM
- * transformation applied only to the messages sent to the model — the caller's
- * own history is left untouched.
- */
-
-const CLEARED_OUTPUT = {
-  type: "text" as const,
-  value:
-    "[cleared to save context — re-run this tool if you still need its result]",
+const CLEARED_OUTPUTS: Record<string, { type: "text"; value: string }> = {
+  // Most tool results just get a minimal placeholder.
+  default: { type: "text" as const, value: "[cleared]" },
+  // For tool results that might still be useful for context, slightly longer.
+  "getPageText": { type: "text" as const, value: "[text cleared — re-run this tool if still needed]" },
+  "searchPage": { type: "text" as const, value: "[search content cleared]" },
+  "getPageState": { type: "text" as const, value: "[page_state cleared]" },
 };
 
-type MaybePart = { type?: unknown };
+const isToolResultPart = (part: unknown): boolean => !!part && typeof part === "object" && (part as { type?: unknown }).type === "tool-result";
 
-const isToolResultPart = (part: unknown): boolean =>
-  !!part &&
-  typeof part === "object" &&
-  (part as MaybePart).type === "tool-result";
-
-/**
- * Return a copy of `messages` with all but the last `keepLast` tool results
- * masked. Messages without tool results are passed through by reference.
- */
 export const maskStaleToolResults = (
   messages: CoreMessage[],
   keepLast: number,
@@ -60,9 +38,9 @@ export const maskStaleToolResults = (
     const content = m.content.map((part, pi) => {
       if (masked.has(`${mi}:${pi}`) && isToolResultPart(part)) {
         changed = true;
-        return { ...(part as object), output: CLEARED_OUTPUT };
+        return { ...(part as object), output: CLEARED_OUTPUTS[part.name] ?? CLEARED_OUTPUTS.default };
       }
-      return part;
+    return part;
     });
     return changed ? ({ ...m, content } as CoreMessage) : m;
   });

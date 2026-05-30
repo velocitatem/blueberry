@@ -1,3 +1,4 @@
+// bun run grounder:server to boot it up
 import { createLogger } from "../logger";
 import {
   parseGroundingOutput,

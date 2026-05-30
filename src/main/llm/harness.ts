@@ -339,11 +339,11 @@ export interface AgentConfig {
 
 export const defaultAgentConfig = (): AgentConfig => ({
   stepLimit: Number(process.env.LLM_STEP_LIMIT) || 1_000_000,
-  maxStepsPerTurn: Number(process.env.LLM_MAX_STEPS_PER_TURN) || 24,
+  maxStepsPerTurn: Number(process.env.LLM_MAX_STEPS_PER_TURN) || 1_000,
   keepToolResults:
     process.env.LLM_KEEP_TOOL_RESULTS !== undefined
       ? Number(process.env.LLM_KEEP_TOOL_RESULTS)
-      : 3,
+      : 5,
   temperature: Number(process.env.LLM_TEMPERATURE) || 0.7,
   debugDir: process.env.LLM_DEBUG_DIR || null,
   attachPageState: process.env.LLM_ATTACH_PAGE_STATE !== "0",

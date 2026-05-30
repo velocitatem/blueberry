@@ -59,6 +59,7 @@ Interact (changes page state — re-read page_state after each call):
 
 Rules:
 - Prefer page_state and page_context for deciding what to do. Call a read tool only when you need more or fresher data than page_state already gives you.
+- When you land on a new page, check for cookie consent/privacy popups or other blocking overlays. If page_state does not make this clear, use locateElement to look for the popup or its accept/close controls, then resolve it before continuing.
 - To click something, describe the target and use clickTarget first. If page_state contains a likely exact ref, include it as fallbackSelector rather than using clickElement directly.
 - Use clickElement only as a fallback after visual grounding is unavailable/failed, or for low-level deterministic actions where a fresh selector is clearly safer.
 - If the element you need isn't in page_state, it may be off-screen (scrollPage to reveal it), hidden in a menu (open it), disabled, or named differently — investigate rather than assuming the action is impossible.

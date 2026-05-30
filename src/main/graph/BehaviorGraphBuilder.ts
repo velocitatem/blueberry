@@ -10,7 +10,6 @@ import {
   createGraph,
 } from "./BehaviorGraph";
 
-// ── URL helpers ───────────────────────────────────────────────────────────────
 
 const hostname = (url: string): string => {
   try { return new URL(url).hostname; } catch { return url; }
@@ -20,17 +19,6 @@ const pathSegments = (url: string): string[] => {
   try { return new URL(url).pathname.split("/").filter(Boolean); } catch { return []; }
 };
 
-const isNoise = (url: string): boolean => {
-  if (!url || url === "about:blank") return true;
-  const h = hostname(url);
-  return h === "strawberrybrowser.com" || /^(chrome|devtools|file):/.test(url);
-};
-
-const SEARCH_ENGINES = new Set([
-  "google.com", "www.google.com", "bing.com", "www.bing.com",
-  "duckduckgo.com", "search.yahoo.com",
-]);
-const isSearchEngine = (h: string): boolean => SEARCH_ENGINES.has(h);
 
 const diffMs = (a: string, b: string): number => {
   try { return Math.abs(new Date(b).getTime() - new Date(a).getTime()); } catch { return 0; }
@@ -45,8 +33,6 @@ const elementSelector = (data: Record<string, unknown>): string => {
   return tag && type ? `${tag}[type="${type}"]` : tag || "unknown";
 };
 
-// ── Builder ───────────────────────────────────────────────────────────────────
-
 export class BehaviorGraphBuilder {
   static buildBehaviorGraph(events: AppEvent[]): BehaviorGraph {
     const graph = createGraph();
@@ -56,7 +42,6 @@ export class BehaviorGraphBuilder {
       const url = str(p.url);
 
       if (event.type === "tab.navigation") {
-        if (isNoise(url)) continue;
 
         const pages = graph.nodes.filter((n): n is PageNode => n.kind === "page");
         const lastPage = pages.at(-1);
@@ -112,7 +97,6 @@ export class BehaviorGraphBuilder {
   }
 }
 
-// ── Motif detection ───────────────────────────────────────────────────────────
 
 const detectMotifs = (graph: BehaviorGraph): void => {
   const pages = graph.nodes.filter((n): n is PageNode => n.kind === "page");
@@ -133,7 +117,6 @@ const detectCollectionLoop = (pages: PageNode[]): MotifMatch | null => {
   const byHost = new Map<string, PageNode[]>();
   for (const p of pages) {
     const h = hostname(p.url);
-    if (isSearchEngine(h)) continue;
     byHost.set(h, [...(byHost.get(h) ?? []), p]);
   }
 
@@ -176,13 +159,10 @@ const detectResearchLoop = (pages: PageNode[]): MotifMatch | null => {
   let hubCount = 0;
 
   for (let i = 0; i < pages.length - 1; i++) {
-    if (!isSearchEngine(hostname(pages[i].url))) continue;
     hubCount++;
     const extHost = hostname(pages[i + 1].url);
-    if (!isSearchEngine(extHost)) {
       externalHosts.add(extHost);
-      instances.push({ nodeIds: [pages[i].id, pages[i + 1].id], paramValue: extHost, complete: true });
-    }
+    instances.push({ nodeIds: [pages[i].id, pages[i + 1].id], paramValue: extHost, complete: true });
   }
 
   if (hubCount >= 2 && externalHosts.size >= 2) {
@@ -196,7 +176,6 @@ const detectResearchLoop = (pages: PageNode[]): MotifMatch | null => {
   return null;
 };
 
-// ── Graph summary (consumed by IPC handlers and UI) ───────────────────────────
 
 export interface GraphSummary {
   pageCount: number;
