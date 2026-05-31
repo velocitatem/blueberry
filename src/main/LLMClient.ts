@@ -21,6 +21,7 @@ import {
   GROUND_TOOL_NAMES,
 } from "./llm";
 import { buildSystemPrompt } from "./llm/prompt";
+import { describePage } from "./llm/sense";
 import { createGrounder, type Grounder } from "./grounding";
 import { serializePageState } from "./PageState";
 import { maskStaleToolResults } from "./llm/compaction";
@@ -157,19 +158,38 @@ const DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
+/** Cheap, vision-capable defaults for the separate "sense" (perception) model. */
+const SENSE_DEFAULT_MODELS: Record<LLMProvider, string> = {
+  openai: "gpt-4o-mini",
+  anthropic: "claude-3-5-haiku-20241022",
+};
+
 const resolveProvider = (): LLMProvider =>
   process.env.LLM_PROVIDER?.toLowerCase() === "anthropic"
     ? "anthropic"
     : "openai";
 
+const resolveSenseProvider = (fallback: LLMProvider): LLMProvider => {
+  const raw = process.env.LLM_SENSE_PROVIDER?.toLowerCase();
+  if (raw === "anthropic") return "anthropic";
+  if (raw === "openai") return "openai";
+  return fallback;
+};
+
 const apiKeyFor = (p: LLMProvider): string | undefined =>
   process.env[p === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"];
+
+const buildModel = (provider: LLMProvider, name: string): LanguageModel =>
+  provider === "anthropic" ? anthropic(name) : openai(name);
 
 export class LLMClient {
   private window: Window | null = null;
   private readonly provider: LLMProvider;
   private readonly modelName: string;
   private readonly model: LanguageModel | null;
+  private readonly senseProvider: LLMProvider;
+  private readonly senseModelName: string;
+  private readonly senseModel: LanguageModel | null;
   private readonly webContents: WebContents;
   private readonly grounder: Grounder | null;
   private readonly config: AgentConfig;
@@ -177,6 +197,12 @@ export class LLMClient {
   private messages: CoreMessage[] = [];
   private lastPageState: string | null = null;
   private stepCount = 0;
+  /** Per-URL cache of the latest page description; reused until the page changes. */
+  private readonly descriptionCache = new Map<string, string>();
+  /** Set after an action that likely changed the page, to force a fresh sense. */
+  private pageMaybeChanged = true;
+  /** Most recent page description, threaded into the recorded trajectory. */
+  private lastDescription: string | null = null;
   private recorder: StepRecorder | null = null;
   private mode: AgentMode = "normal";
   private activePacketId: string | null = null;
@@ -189,6 +215,10 @@ export class LLMClient {
     this.provider = resolveProvider();
     this.modelName = process.env.LLM_MODEL || DEFAULT_MODELS[this.provider];
     this.model = this.initModel();
+    this.senseProvider = resolveSenseProvider(this.provider);
+    this.senseModelName =
+      process.env.LLM_SENSE_MODEL || SENSE_DEFAULT_MODELS[this.senseProvider];
+    this.senseModel = this.initSenseModel();
     this.grounder = createGrounder(webContents);
     this.config = defaultAgentConfig();
     this.recorder = this.config.debugDir
@@ -271,6 +301,8 @@ export class LLMClient {
     this.messages = [];
     this.lastPageState = null;
     this.stepCount = 0;
+    this.descriptionCache.clear();
+    this.pageMaybeChanged = true;
     this.sendMessagesToRenderer();
   }
 
@@ -307,9 +339,15 @@ export class LLMClient {
 
   private initModel(): LanguageModel | null {
     if (!apiKeyFor(this.provider)) return null;
-    return this.provider === "anthropic"
-      ? anthropic(this.modelName)
-      : openai(this.modelName);
+    return buildModel(this.provider, this.modelName);
+  }
+
+  /** Perception model for the sense stage. Falls back to the planner model when
+   *  the sense provider has no key of its own. */
+  private initSenseModel(): LanguageModel | null {
+    if (apiKeyFor(this.senseProvider))
+      return buildModel(this.senseProvider, this.senseModelName);
+    return this.model;
   }
 
   private logInit(): void {
@@ -318,6 +356,8 @@ export class LLMClient {
         {
           provider: this.provider,
           model: this.modelName,
+          senseProvider: this.senseProvider,
+          senseModel: this.senseModelName,
           debug: !!this.recorder,
         },
         "LLM client initialized",
@@ -349,11 +389,22 @@ export class LLMClient {
     return { url, title };
   }
 
+  /**
+   * One user turn, run as a sense → plan → act loop. Each step the model takes is
+   * preceded (in `prepareStep`) by a fresh perception pass: a separate vision
+   * model describes the current screenshot, and that <page_description> is fed in
+   * as the most recent message. The model then plans and acts (one tool call),
+   * the tool runs, and the SDK loops to the next step until the model produces a
+   * final answer or a budget / watchdog limit trips. Driving the iteration through
+   * the SDK's step loop (rather than re-invoking the model per step) keeps the
+   * agent's momentum and a reliable completion signal.
+   */
   private async runTurn(messageId: string): Promise<void> {
     if (!this.model) throw new Error("Model not initialized");
     if (this.stepCount >= this.config.stepLimit) throw new LimitsExceeded();
 
     const { url, title } = this.pageContext();
+    const goal = this.latestUserGoal();
 
     let systemPrompt = buildSystemPrompt(url, title);
     let messages = this.messages;
@@ -386,14 +437,14 @@ export class LLMClient {
               stopWhen: stepCountIs(
                 this.mode === "night"
                   ? this.config.nightStepBudget
-                  : this.config.stepLimit,
+                  : this.config.maxStepsPerTurn,
               ),
               temperature: this.supportsTemperature()
                 ? this.config.temperature || undefined
                 : undefined,
               maxRetries: 3,
               prepareStep: ({ messages }) =>
-                this.prepareStep(messages as CoreMessage[]),
+                this.prepareStep(messages as CoreMessage[], goal),
             }),
           ),
         );
@@ -409,6 +460,22 @@ export class LLMClient {
           ? "Step budget reached."
           : "Completed.";
     }
+  }
+
+  /** The most recent user-authored text — the goal driving this turn. */
+  private latestUserGoal(): string | null {
+    for (let i = this.messages.length - 1; i >= 0; i -= 1) {
+      const m = this.messages[i];
+      if (m.role !== "user") continue;
+      if (typeof m.content === "string") return m.content;
+      const text = m.content
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join("\n")
+        .trim();
+      if (text) return text;
+    }
+    return null;
   }
 
   /** Stop a night run that has exceeded its time budget or is looping. */
@@ -452,39 +519,115 @@ export class LLMClient {
     }
   }
 
+  /**
+   * Sense stage: describe the current screenshot with the separate perception
+   * model. Reuses the cached description for a page until an action changes it,
+   * so consecutive read-only steps don't re-pay for perception. Returns null
+   * when sensing is disabled or no screenshot/model is available.
+   */
+  private async sensePage(
+    goal: string | null,
+    url: string | null,
+    title: string | null,
+  ): Promise<string | null> {
+    if (!this.config.sense || !this.senseModel) return null;
+    const key = url ?? "";
+    const cached = this.descriptionCache.get(key);
+    if (cached && !this.pageMaybeChanged) {
+      this.lastDescription = cached;
+      return cached;
+    }
+
+    const screenshotDataUrl = await this.captureScreenshotDataUrl();
+    if (!screenshotDataUrl) {
+      this.lastDescription = cached ?? null;
+      return cached ?? null;
+    }
+
+    const description = await describePage({
+      model: this.senseModel,
+      modelName: this.senseModelName,
+      provider: this.senseProvider,
+      screenshotDataUrl,
+      goal,
+      url,
+      title,
+    });
+    this.descriptionCache.set(key, description);
+    this.pageMaybeChanged = false;
+    this.lastDescription = description;
+    return description;
+  }
+
+  /** Capture the active tab as a downscaled JPEG data URL for the sense model. */
+  private async captureScreenshotDataUrl(): Promise<string | null> {
+    const tab = this.window?.activeTab;
+    if (!tab) return null;
+    try {
+      const image = await tab.screenshot();
+      const { width, height } = image.getSize();
+      const max = this.config.screenshotMaxDimension;
+      const resized =
+        Math.max(width, height) > max
+          ? image.resize(width >= height ? { width: max } : { height: max })
+          : image;
+      const jpeg = resized.toJPEG(this.config.screenshotJpegQuality);
+      return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+    } catch (error) {
+      log.warn({ err: error }, "screenshot capture failed");
+      return null;
+    }
+  }
+
+  /**
+   * Runs before every model step. Senses the page (a fresh <page_description>
+   * from the separate vision model), optionally attaches page_state, compacts
+   * stale tool results, and enforces night limits. The description and page_state
+   * are injected as the most recent messages so each plan step sees current
+   * perception.
+   */
   private async prepareStep(
     messages: CoreMessage[],
+    goal: string | null,
   ): Promise<{ messages: CoreMessage[] } | undefined> {
     if (this.mode === "night") this.enforceNightLimits(messages);
 
-    const calledNames = toolCallParts(messages)
-      .map((part) => part.toolName)
-      .filter((name): name is string => !!name);
+    // If the most recent action changed the page, force a fresh description.
+    const lastTool = toolCallParts(messages).at(-1)?.toolName;
+    if (
+      lastTool &&
+      (INTERACT_TOOL_NAMES.has(lastTool) || GROUND_TOOL_NAMES.has(lastTool))
+    ) {
+      this.pageMaybeChanged = true;
+    }
 
-    const changedPage = calledNames.some(
-      (n) => INTERACT_TOOL_NAMES.has(n) || GROUND_TOOL_NAMES.has(n),
-    );
+    const { url, title } = this.pageContext();
+    const description = await this.sensePage(goal, url, title);
 
-    const requestedState = calledNames.includes("getPageState");
-    const refresh = this.stepCount === 0 || changedPage || requestedState;
-
-    if (this.config.attachPageState && refresh)
+    if (this.config.attachPageState)
       this.lastPageState = await this.capturePageState();
 
     const base =
       this.config.keepToolResults >= 0
-        ? maskStaleToolResults(messages, this.config.keepToolResults) // removing context to save space
+        ? maskStaleToolResults(messages, this.config.keepToolResults)
         : messages;
 
-    const trailing: CoreMessage[] =
-      this.config.attachPageState && this.lastPageState
-        ? [
-            {
-              role: "user",
-              content: [{ type: "text", text: this.lastPageState }],
-            },
-          ]
-        : [];
+    const trailing: CoreMessage[] = [];
+    if (this.config.attachPageState && this.lastPageState)
+      trailing.push({
+        role: "user",
+        content: [{ type: "text", text: this.lastPageState }],
+      });
+    if (description)
+      trailing.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `<page_description>\nURL: ${url ?? "(unknown)"}\n${description}\n</page_description>`,
+          },
+        ],
+      });
 
     if (base === messages && trailing.length === 0) return undefined;
     return { messages: [...base, ...trailing] };
@@ -513,7 +656,7 @@ export class LLMClient {
     annotateTurnUsage(this.usage.last);
     await this.recordSteps(steps);
 
-    this.emit(messageId, { content: await result.text, isComplete: true }); // finishi it  ooff
+    this.emit(messageId, { content: await result.text, isComplete: true });
   }
 
   private replacePlaceholderWithTurn(
@@ -540,6 +683,7 @@ export class LLMClient {
       });
       await this.recorder.record({
         step: this.stepCount,
+        description: this.lastDescription ?? undefined,
         thought: step.text ?? "",
         toolCalls,
         observations: observationsFromStep(step, page),

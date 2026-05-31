@@ -227,6 +227,8 @@ export class UsageTracker {
 
 export interface StepArtifact {
   step: number;
+  /** Perception (sense stage): the page description the planner acted on. */
+  description?: string;
   thought: string;
   toolCalls: Array<{ name: string; input: unknown }>;
   observations: Observation[];
@@ -271,6 +273,7 @@ export class StepRecorder {
         JSON.stringify(a, null, 2),
       );
       const md: string[] = [`## Step ${a.step}\n`];
+      if (a.description) md.push(`### Page description\n\n${a.description}\n`);
       if (a.thought) md.push(`### Thought\n\n${a.thought}\n`);
       for (const c of a.toolCalls) {
         md.push(
@@ -337,6 +340,16 @@ export interface AgentConfig {
    */
   attachScreenshot: boolean;
   /**
+   * Sense → plan → act: run a separate vision model to describe the screenshot
+   * before each planning step. On by default; disable with LLM_SENSE=0 to fall
+   * back to a perception-free loop.
+   */
+  sense: boolean;
+  /** Resize the sense screenshot so its longest side is at most this many px. */
+  screenshotMaxDimension: number;
+  /** JPEG quality (1-100) for the sense screenshot. Lower = fewer vision tokens. */
+  screenshotJpegQuality: number;
+  /**
    * Night mode safety ceilings so an unattended run always terminates: a hard
    * step budget, a wall-clock budget, and how many identical consecutive actions
    * the watchdog tolerates before stopping a stuck run.
@@ -357,6 +370,10 @@ export const defaultAgentConfig = (): AgentConfig => ({
   debugDir: process.env.LLM_DEBUG_DIR || null,
   attachPageState: process.env.LLM_ATTACH_PAGE_STATE !== "0",
   attachScreenshot: process.env.LLM_ATTACH_SCREENSHOT === "1",
+  sense: process.env.LLM_SENSE !== "0",
+  screenshotMaxDimension:
+    Number(process.env.LLM_SCREENSHOT_MAX_DIMENSION) || 1280,
+  screenshotJpegQuality: Number(process.env.LLM_SCREENSHOT_JPEG_QUALITY) || 70,
   nightStepBudget: Number(process.env.NIGHT_STEP_BUDGET) || 60,
   nightTimeBudgetMs: Number(process.env.NIGHT_TIME_BUDGET_MS) || 30 * 60 * 1000,
   nightRepeatLimit: Number(process.env.NIGHT_REPEAT_LIMIT) || 4,
