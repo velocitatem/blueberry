@@ -92,8 +92,18 @@ export const TabBar: React.FC = () => {
 
     return (
         <div className="flex-1 overflow-x-hidden flex items-center">
-            {/* macOS traffic lights spacing */}
-            <div className="pl-20" />
+            {/* macOS traffic lights spacing + logo */}
+            <div className="w-20 flex items-center justify-center">
+                <span className="text-base select-none">🫐</span>
+            </div>
+
+            {/* Add Tab Button */}
+            <div className="pl-1 pr-2">
+                <TabBarButton
+                    Icon={Plus}
+                    onClick={handleCreateTab}
+                />
+            </div>
 
             {/* Tabs */}
             <div className="flex-1 overflow-x-auto flex">
@@ -108,14 +118,6 @@ export const TabBar: React.FC = () => {
                         onActivate={() => switchTab(tab.id)}
                     />
                 ))}
-            </div>
-
-            {/* Add Tab Button */}
-            <div className="pl-1 pr-2">
-                <TabBarButton
-                    Icon={Plus}
-                    onClick={handleCreateTab}
-                />
             </div>
         </div>
     )
