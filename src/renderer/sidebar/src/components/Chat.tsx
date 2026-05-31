@@ -4,7 +4,7 @@ import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { ArrowUp, Plus } from 'lucide-react'
-import spinnerSvg from '../../../../../resources/spinner.svg?raw'
+import bounceSvg from '../../../../../resources/blueberry-bounce.svg?raw'
 import { useChat } from '../contexts/ChatContext'
 import { cn } from '@common/lib/utils'
 import { Button } from '@common/components/Button'
@@ -105,10 +105,7 @@ const markdownComponents: Components = {
 }
 
 // Markdown Renderer Component
-const Markdown: React.FC<{ content: string; isStreaming?: boolean }> = ({
-    content,
-    isStreaming,
-}) => (
+const Markdown: React.FC<{ content: string }> = ({ content }) => (
     <div className={markdownProseClassName}>
         <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkBreaks]}
@@ -116,28 +113,19 @@ const Markdown: React.FC<{ content: string; isStreaming?: boolean }> = ({
         >
             {content}
         </ReactMarkdown>
-        {isStreaming && (
-            <span
-                className="ml-0.5 inline-block h-4 w-2 animate-pulse bg-primary/60 dark:bg-primary/40"
-                aria-hidden
-            />
-        )}
     </div>
 )
 
 // Assistant Message Component - appears on the left
-const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = ({
-    content,
-    isStreaming
-}) => (
+const AssistantMessage: React.FC<{ content: string }> = ({ content }) => (
     <div className="relative w-full animate-fade-in">
         <div className="py-1">
-            <Markdown content={content} isStreaming={isStreaming} />
+            <Markdown content={content} />
         </div>
     </div>
 )
 
-// Loading indicator — animated blueberries from resources/spinner.svg
+// Loading indicator — bouncing blueberry
 const LoadingIndicator: React.FC = () => {
     const [isVisible, setIsVisible] = useState(false)
 
@@ -148,17 +136,13 @@ const LoadingIndicator: React.FC = () => {
     return (
         <div
             className={cn(
-                "transition-transform duration-300 ease-in-out",
-                isVisible ? "scale-100" : "scale-0"
+                "transition-opacity duration-300",
+                isVisible ? "opacity-100" : "opacity-0"
             )}
             role="status"
             aria-label="Loading"
-        >
-            <div
-                className="size-12 [&>svg]:size-full [&>svg]:block"
-                dangerouslySetInnerHTML={{ __html: spinnerSvg }}
-            />
-        </div>
+            dangerouslySetInnerHTML={{ __html: bounceSvg }}
+        />
     )
 }
 
@@ -256,16 +240,10 @@ interface ConversationTurn {
 const ConversationTurnComponent: React.FC<{
     turn: ConversationTurn
     isLoading?: boolean
-    isStreaming?: boolean
-}> = ({ turn, isLoading, isStreaming }) => (
+}> = ({ turn, isLoading }) => (
     <div className="pt-12 flex flex-col gap-8">
         {turn.user && <UserMessage content={turn.user.content} />}
-        {turn.assistant && (
-            <AssistantMessage
-                content={turn.assistant.content}
-                isStreaming={isStreaming}
-            />
-        )}
+        {turn.assistant && <AssistantMessage content={turn.assistant.content} />}
         {isLoading && (
             <div className="flex justify-start">
                 <LoadingIndicator />
@@ -295,10 +273,6 @@ export const Chat: React.FC = () => {
             conversationTurns.push({ assistant: messages[i] })
         }
     }
-
-    // Check if we need to show loading after the last turn
-    const showLoadingAfterLastTurn = isLoading &&
-        messages[messages.length - 1]?.role === 'user'
 
     return (
         <div className="flex flex-col h-full bg-background">
@@ -339,12 +313,7 @@ export const Chat: React.FC = () => {
                                     key={`turn-${index}`}
                                     turn={turn}
                                     isLoading={
-                                        showLoadingAfterLastTurn &&
-                                        index === conversationTurns.length - 1
-                                    }
-                                    isStreaming={
                                         isLoading &&
-                                        !!turn.assistant &&
                                         index === conversationTurns.length - 1
                                     }
                                 />

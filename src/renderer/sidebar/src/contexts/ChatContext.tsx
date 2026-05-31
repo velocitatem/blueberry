@@ -35,10 +35,26 @@ const extractText = (content: any): string => {
         .join('')
 }
 
+/** True when an assistant message is a mid-task step with tool calls — not the final answer. */
+const isIntermediateStep = (msg: any): boolean => {
+    if (msg.role !== 'assistant') return false
+    if (!Array.isArray(msg.content)) return false
+    return msg.content.some((p: any) => p?.type === 'tool-call')
+}
+
 const toDisplayMessages = (raw: any[]): Message[] => {
     const out: Message[] = []
+
+    // Find the last assistant message index so we always show it even if it has
+    // tool calls (edge case: agent finishes without a plain-text final answer).
+    let lastAssistantIdx = -1
+    raw.forEach((msg, i) => { if (msg.role === 'assistant') lastAssistantIdx = i })
+
     raw.forEach((msg, index) => {
         if (msg.role !== 'user' && msg.role !== 'assistant') return
+        // Skip intermediate steps (assistant messages mid-task that called tools),
+        // but always keep the last assistant message so something is shown.
+        if (isIntermediateStep(msg) && index !== lastAssistantIdx) return
         const content = extractText(msg.content).trim()
         if (!content) return
         out.push({

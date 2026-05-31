@@ -17,6 +17,7 @@ import type { Window } from "./Window";
 import {
   createTools,
   filterTools,
+  TodoStore,
   INTERACT_TOOL_NAMES,
   GROUND_TOOL_NAMES,
 } from "./llm";
@@ -33,6 +34,7 @@ import {
   annotateTurnUsage,
   defaultAgentConfig,
   observationsFromStep,
+  sleep,
   userFacingError,
   withRetries,
   withTurnTrace,
@@ -67,7 +69,6 @@ interface NightRunState {
   stepsAtStart: number;
   status: "running" | "done" | "stopped";
   reason: string | null;
-  sigHistory: string[];
 }
 
 export interface NightStatus {
@@ -197,12 +198,17 @@ export class LLMClient {
   private messages: CoreMessage[] = [];
   private lastPageState: string | null = null;
   private stepCount = 0;
-  /** Per-URL cache of the latest page description; reused until the page changes. */
-  private readonly descriptionCache = new Map<string, string>();
+  /** Per-URL cache: { text, ts } reused until page changes or entry expires. */
+  private readonly descriptionCache = new Map<string, { text: string; ts: number }>();
   /** Set after an action that likely changed the page, to force a fresh sense. */
   private pageMaybeChanged = true;
   /** Most recent page description, threaded into the recorded trajectory. */
   private lastDescription: string | null = null;
+  private readonly todos = new TodoStore();
+  /** Separate usage tracker for the sense (perception) model calls. */
+  private readonly senseUsage = new UsageTracker();
+  /** Rolling history of tool signatures for loop/thrash detection in normal mode. */
+  private sigHistory: string[] = [];
   private recorder: StepRecorder | null = null;
   private mode: AgentMode = "normal";
   private activePacketId: string | null = null;
@@ -246,7 +252,6 @@ export class LLMClient {
         stepsAtStart: this.stepCount,
         status: "running",
         reason: null,
-        sigHistory: [],
       };
     } else if (this.nightRun?.status === "running") {
       this.nightRun.status = "stopped";
@@ -303,11 +308,21 @@ export class LLMClient {
     this.stepCount = 0;
     this.descriptionCache.clear();
     this.pageMaybeChanged = true;
+    this.todos.clear();
+    this.sigHistory = [];
     this.sendMessagesToRenderer();
   }
 
-  getUsage(): { last: UsageSnapshot; cumulative: UsageSnapshot } {
-    return { last: this.usage.last, cumulative: this.usage.cumulative };
+  getUsage(): {
+    last: UsageSnapshot;
+    cumulative: UsageSnapshot;
+    sense: { last: UsageSnapshot; cumulative: UsageSnapshot };
+  } {
+    return {
+      last: this.usage.last,
+      cumulative: this.usage.cumulative,
+      sense: { last: this.senseUsage.last, cumulative: this.senseUsage.cumulative },
+    };
   }
 
   async sendChatMessage(request: ChatRequest): Promise<void> {
@@ -408,7 +423,7 @@ export class LLMClient {
 
     let systemPrompt = buildSystemPrompt(url, title);
     let messages = this.messages;
-    let tools = createTools({ window: this.window, grounder: this.grounder });
+    let tools = createTools({ window: this.window, grounder: this.grounder, todos: this.todos });
 
     if (this.mode === "night" && this.activePacketId && this.nightHarness) {
       const harnessCtx = this.nightHarness.buildContext({
@@ -478,7 +493,8 @@ export class LLMClient {
     return null;
   }
 
-  /** Stop a night run that has exceeded its time budget or is looping. */
+  /** Stop a night run that has exceeded its time budget. Thrash detection is
+   *  handled by detectThrash (called before this) using the shared sigHistory. */
   private enforceNightLimits(messages: CoreMessage[]): void {
     const run = this.nightRun;
     if (!run) return;
@@ -489,29 +505,14 @@ export class LLMClient {
       throw new LimitsExceeded(run.reason);
     }
 
+    // Per-run recurrence check: count how many times the current action has
+    // appeared since this night run started.
     const sig = lastToolSignature(messages);
     if (!sig) return;
-    run.sigHistory.push(sig);
+    const runHistory = this.sigHistory.slice(run.stepsAtStart);
     const n = this.config.nightRepeatLimit;
-
-    // 1) Same action repeated back-to-back (e.g. getPageText:{} x N).
-    if (
-      run.sigHistory.length >= n &&
-      run.sigHistory.slice(-n).every((s) => s === sig)
-    ) {
-      run.status = "stopped";
-      run.reason = "Repeated the same action; stopping to avoid a loop.";
-      throw new LimitsExceeded(run.reason);
-    }
-
-    // 2) Non-consecutive thrash: the agent cycles among a few actions/URLs
-    //    (navigate A → read → navigate B → read → navigate A …) without making
-    //    progress. Catch it when a recent window collapses to few distinct
-    //    signatures, or one signature recurs far too often overall.
-    const window = run.sigHistory.slice(-n * 2);
-    const distinct = new Set(window).size;
-    const sameSigCount = run.sigHistory.filter((s) => s === sig).length;
-    if ((window.length >= n * 2 && distinct <= n) || sameSigCount >= n * 2) {
+    const sameSigCount = runHistory.filter((s) => s === sig).length;
+    if (sameSigCount >= n * 2) {
       run.status = "stopped";
       run.reason =
         "Cycling through the same actions without progress; stopping to avoid a loop.";
@@ -529,22 +530,27 @@ export class LLMClient {
     goal: string | null,
     url: string | null,
     title: string | null,
+    recentActions?: string[],
   ): Promise<string | null> {
     if (!this.config.sense || !this.senseModel) return null;
     const key = url ?? "";
     const cached = this.descriptionCache.get(key);
-    if (cached && !this.pageMaybeChanged) {
-      this.lastDescription = cached;
-      return cached;
+    const cacheAge = cached ? Date.now() - cached.ts : Infinity;
+    const cacheValid =
+      cached && !this.pageMaybeChanged && cacheAge < this.config.senseMaxCacheAgeMs;
+    if (cacheValid) {
+      this.lastDescription = cached.text;
+      return cached.text;
     }
 
     const screenshotDataUrl = await this.captureScreenshotDataUrl();
     if (!screenshotDataUrl) {
-      this.lastDescription = cached ?? null;
-      return cached ?? null;
+      const fallback = cached?.text ?? null;
+      this.lastDescription = fallback;
+      return fallback;
     }
 
-    const description = await describePage({
+    const result = await describePage({
       model: this.senseModel,
       modelName: this.senseModelName,
       provider: this.senseProvider,
@@ -552,11 +558,13 @@ export class LLMClient {
       goal,
       url,
       title,
+      recentActions,
     });
-    this.descriptionCache.set(key, description);
+    this.senseUsage.record(result.usage);
+    this.descriptionCache.set(key, { text: result.text, ts: Date.now() });
     this.pageMaybeChanged = false;
-    this.lastDescription = description;
-    return description;
+    this.lastDescription = result.text;
+    return result.text;
   }
 
   /** Capture the active tab as a downscaled JPEG data URL for the sense model. */
@@ -586,23 +594,66 @@ export class LLMClient {
    * are injected as the most recent messages so each plan step sees current
    * perception.
    */
+  /**
+   * Detect repeated or cycling actions across all modes. Throws LimitsExceeded
+   * when the agent is clearly stuck. Night mode also runs enforceNightLimits for
+   * the time-budget and per-run tracking on top of this check.
+   */
+  private detectThrash(messages: CoreMessage[]): void {
+    const sig = lastToolSignature(messages);
+    if (!sig) return;
+    this.sigHistory.push(sig);
+    const n = this.config.nightRepeatLimit;
+    if (
+      this.sigHistory.length >= n &&
+      this.sigHistory.slice(-n).every((s) => s === sig)
+    ) {
+      throw new LimitsExceeded("Repeated the same action; stopping to avoid a loop.");
+    }
+    // Cycle detection: collapsing to ≤2 distinct actions over the recent window.
+    const win = this.sigHistory.slice(-n * 2);
+    if (win.length >= n * 2 && new Set(win).size <= 2) {
+      throw new LimitsExceeded(
+        "Cycling through the same actions without making progress.",
+      );
+    }
+  }
+
   private async prepareStep(
     messages: CoreMessage[],
     goal: string | null,
   ): Promise<{ messages: CoreMessage[] } | undefined> {
+    this.detectThrash(messages);
     if (this.mode === "night") this.enforceNightLimits(messages);
 
-    // If the most recent action changed the page, force a fresh description.
+    // If the most recent action changed the page, settle before screenshotting.
     const lastTool = toolCallParts(messages).at(-1)?.toolName;
     if (
       lastTool &&
       (INTERACT_TOOL_NAMES.has(lastTool) || GROUND_TOOL_NAMES.has(lastTool))
     ) {
       this.pageMaybeChanged = true;
+      if (this.config.pageSettleDelayMs > 0)
+        await sleep(this.config.pageSettleDelayMs);
     }
 
+    // Build a compact summary of the last 2 actions to feed the perception model.
+    const recentActions = toolCallParts(messages)
+      .slice(-2)
+      .map((tc) => {
+        const name = tc.toolName ?? "unknown";
+        const input = tc.input ?? tc.args;
+        if (!input || Object.keys(input as object).length === 0) return name;
+        try {
+          const s = JSON.stringify(input);
+          return `${name}(${s.length > 80 ? `${s.slice(0, 80)}…` : s})`;
+        } catch {
+          return name;
+        }
+      });
+
     const { url, title } = this.pageContext();
-    const description = await this.sensePage(goal, url, title);
+    const description = await this.sensePage(goal, url, title, recentActions);
 
     if (this.config.attachPageState)
       this.lastPageState = await this.capturePageState();

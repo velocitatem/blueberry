@@ -3,11 +3,16 @@ import type { FlexibleSchema } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 import type { Window } from "../Window";
 import type { Grounder } from "../grounding/Grounder";
+import type { TodoStore } from "./todoTools";
 import { createLogger } from "../logger";
 
 const log = createLogger("tool");
 
-export type ToolContext = { window: Window | null; grounder?: Grounder | null };
+export type ToolContext = {
+  window: Window | null;
+  grounder?: Grounder | null;
+  todos?: TodoStore;
+};
 
 export const MAX_PAGE_CONTENT_LENGTH = 4000;
 

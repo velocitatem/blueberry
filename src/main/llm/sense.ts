@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel } from "ai";
+import { generateText, type LanguageModel, type LanguageModelUsage } from "ai";
 import { createLogger } from "../logger";
 import { withRetries, withTurnTrace } from "./harness";
 
@@ -16,8 +16,14 @@ export const buildSensePrompt = (
   goal: string | null,
   url: string | null,
   title: string | null,
-): string =>
-  `
+  recentActions?: string[],
+): string => {
+  const recentActionsSection =
+    recentActions && recentActions.length > 0
+      ? `\nRecent actions by the agent (most recent last — focus on what likely changed):\n${recentActions.map((a) => `  - ${a}`).join("\n")}\n`
+      : "";
+
+  return `
 You are the perception module of a browser agent. You are given a screenshot of
 the current browser viewport. Your description is the planning agent's ONLY view of
 the page — it cannot see the screenshot, so anything you omit does not exist to it.
@@ -49,8 +55,9 @@ the fold.
 
 Context (for relevance only, not part of the screenshot):
 - Current URL: ${url || "(unknown)"}
-${title ? `- Page title: ${title}\n` : ""}- The agent's goal: ${goal || "(not specified)"}
+${title ? `- Page title: ${title}\n` : ""}- The agent's goal: ${goal || "(not specified)"}${recentActionsSection}
 `.trim();
+};
 
 export interface DescribePageArgs {
   model: LanguageModel;
@@ -60,11 +67,24 @@ export interface DescribePageArgs {
   goal: string | null;
   url: string | null;
   title: string | null;
+  recentActions?: string[];
 }
 
-/** Run the perception model on one screenshot and return its description text. */
-export const describePage = async (args: DescribePageArgs): Promise<string> => {
-  const prompt = buildSensePrompt(args.goal, args.url, args.title);
+export interface DescribePageResult {
+  text: string;
+  usage: LanguageModelUsage | undefined;
+}
+
+/** Run the perception model on one screenshot and return its description + token usage. */
+export const describePage = async (
+  args: DescribePageArgs,
+): Promise<DescribePageResult> => {
+  const prompt = buildSensePrompt(
+    args.goal,
+    args.url,
+    args.title,
+    args.recentActions,
+  );
   try {
     const result = await withTurnTrace(
       { modelName: args.modelName, modelProvider: args.provider },
@@ -85,9 +105,12 @@ export const describePage = async (args: DescribePageArgs): Promise<string> => {
           }),
         ),
     );
-    return result.text.trim();
+    return { text: result.text.trim(), usage: result.usage };
   } catch (err) {
     log.warn({ err }, "page description failed");
-    return "(page description unavailable — perception model error)";
+    return {
+      text: "(page description unavailable — perception model error)",
+      usage: undefined,
+    };
   }
 };

@@ -51,7 +51,7 @@ export const classifyError = (err: unknown): ErrorClass => {
   return "fatal";
 };
 
-const sleep = (ms: number): Promise<void> =>
+export const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
 export const withRetries = async <T>(
@@ -350,6 +350,16 @@ export interface AgentConfig {
   /** JPEG quality (1-100) for the sense screenshot. Lower = fewer vision tokens. */
   screenshotJpegQuality: number;
   /**
+   * After an interact/ground tool fires, wait this many ms before taking the next
+   * screenshot. Lets SPAs paint before the perception model describes a loading state.
+   */
+  pageSettleDelayMs: number;
+  /**
+   * Max age of a cached page description in ms. After this time the description is
+   * re-taken even when the URL and pageMaybeChanged flag haven't changed.
+   */
+  senseMaxCacheAgeMs: number;
+  /**
    * Night mode safety ceilings so an unattended run always terminates: a hard
    * step budget, a wall-clock budget, and how many identical consecutive actions
    * the watchdog tolerates before stopping a stuck run.
@@ -374,6 +384,8 @@ export const defaultAgentConfig = (): AgentConfig => ({
   screenshotMaxDimension:
     Number(process.env.LLM_SCREENSHOT_MAX_DIMENSION) || 1280,
   screenshotJpegQuality: Number(process.env.LLM_SCREENSHOT_JPEG_QUALITY) || 70,
+  pageSettleDelayMs: Number(process.env.LLM_PAGE_SETTLE_MS ?? 400),
+  senseMaxCacheAgeMs: Number(process.env.LLM_SENSE_CACHE_AGE_MS ?? 30_000),
   nightStepBudget: Number(process.env.NIGHT_STEP_BUDGET) || 60,
   nightTimeBudgetMs: Number(process.env.NIGHT_TIME_BUDGET_MS) || 30 * 60 * 1000,
   nightRepeatLimit: Number(process.env.NIGHT_REPEAT_LIMIT) || 4,
