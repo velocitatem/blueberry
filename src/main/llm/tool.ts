@@ -8,14 +8,8 @@ import { createLogger } from "../logger";
 
 const log = createLogger("tool");
 
-/**
- * Deduplication cache for read-only tools. When the same tool is called with the
- * same args on the same URL without an intervening page change, the tool returns
- * the cached result with a note instead of re-executing. This stops models from
- * looping on getPageText/searchPage when the page hasn't changed.
- */
 export class ReadCache {
-  private readonly entries = new Map<string, unknown>();
+  private readonly entries = new Map<string, unknown>(); // TODO: offload to local storage maybe
 
   private key(toolName: string, url: string, argsKey: string): string {
     return `${toolName}\0${url}\0${argsKey}`;
@@ -79,11 +73,6 @@ export type ToolDef<TInput = unknown, TResult = unknown> = {
   description: string;
   inputSchema: FlexibleSchema<TInput>;
   execute: (input: TInput, ctx: ToolContext) => Promise<TResult>;
-  /**
-   * When true, buildTool wraps this tool with read-cache logic: identical calls
-   * (same tool name + URL + args) return the cached result with a note instead of
-   * re-executing. The cache is invalidated by ReadCache.clear() on page change.
-   */
   cacheable?: boolean;
 };
 
@@ -101,13 +90,12 @@ export const registerTools = <T extends ToolDefs>(defs: T): T => {
 };
 
 const CACHED_NOTE =
-  "Same result as your previous call — the page has not changed. Use the data you already have instead of calling again.";
+  "Same result as your previous call - the page has not changed. Use the data you already have instead of calling again.";
 
-/** Deterministic serialization of tool input for use as a cache key. */
 const stableKey = (v: unknown): string => {
-  if (!v || typeof v !== "object") return String(v ?? "");
+  if (!v || typeof v !== "object") return String(v ?? ""); // if not object or null, return stringified value
   const obj: Record<string, unknown> = {};
-  for (const k of Object.keys(v as object).sort())
+  for (const k of Object.keys(v as object).sort()) // sort keys to make it deterministic
     obj[k] = (v as Record<string, unknown>)[k];
   try { return JSON.stringify(obj); } catch { return ""; }
 };

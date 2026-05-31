@@ -7,14 +7,7 @@ import { GROUND_TOOL_NAMES } from "./groundTools";
 
 export type AgentMode = "normal" | "night";
 
-/**
- * How much the night agent is allowed to do. The floor (`summarize`) is enforced
- * at the tool layer — interaction is physically removed — so it cannot act even
- * if the model tries. `prepare`/`act` differ in intent and are governed by the
- * policy prompt, since the difference (e.g. "fill" vs "submit") is semantic, not
- * a distinct tool.
- */
-export type AutonomyLevel = "summarize" | "prepare" | "act";
+export type AutonomyLevel = "summarize" | "prepare" | "act"; // let user pick
 
 export interface HarnessContext {
   systemAddendum: string;
@@ -53,13 +46,6 @@ const autonomyClause = (level: AutonomyLevel): string => {
   }
 };
 
-/**
- * Builds the per-turn night-mode context from a compiled task packet. Nothing
- * here is keyed to a fixed set of task types: the plan, the known values, and the
- * tool ordering are read off the packet the compiler produced, and the tool
- * policy is derived from the chosen autonomy level — so new kinds of work flow
- * through unchanged.
- */
 export class NightAgentHarness {
   constructor(
     private readonly graphStore: GraphStore,

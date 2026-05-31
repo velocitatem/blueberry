@@ -1,3 +1,4 @@
+// mix between ai-core and harness logic
 import { mkdir, writeFile, appendFile } from "fs/promises";
 import { join } from "path";
 import type { CoreMessage, StepResult, ToolSet, LanguageModelUsage } from "ai";
@@ -310,65 +311,19 @@ export class StepRecorder {
 }
 
 export interface AgentConfig {
-  /** Hard ceiling on total steps across the whole conversation. */
   stepLimit: number;
-  /**
-   * Ceiling on steps within a single user turn. Caps the `n` in the O(n²)
-   * context-replay cost (every step re-sends the growing transcript). Keeps a
-   * runaway turn from ballooning input tokens.
-   */
   maxStepsPerTurn: number;
-  /**
-   * How many of the most recent tool results to keep verbatim when sending the
-   * transcript to the model. Older tool results are masked with a short stub
-   * (the tool *call* is preserved). 0 disables masking. This is the main lever
-   * against input-token growth, since tool outputs are the bulkiest content.
-   */
   keepToolResults: number;
   temperature: number;
   debugDir: string | null;
-  /**
-   * Feed a compact structured page-state snapshot (AX tree + geometry) each
-   * turn. This is the default per-turn page context and replaces full-resolution
-   * screenshots. On by default.
-   */
   attachPageState: boolean;
-  /**
-   * Also attach a full-resolution screenshot each turn. Off by default — the
-   * agent relies on page_state + on-demand visual grounding instead. Opt in with
-   * LLM_ATTACH_SCREENSHOT=1 (e.g. for debugging or escalation).
-   */
   attachScreenshot: boolean;
-  /**
-   * Sense → plan → act: run a separate vision model to describe the screenshot
-   * before each planning step. On by default; disable with LLM_SENSE=0 to fall
-   * back to a perception-free loop.
-   */
   sense: boolean;
-  /** Resize the sense screenshot so its longest side is at most this many px. */
   screenshotMaxDimension: number;
-  /** JPEG quality (1-100) for the sense screenshot. Lower = fewer vision tokens. */
   screenshotJpegQuality: number;
-  /**
-   * After an interact/ground tool fires, wait this many ms before taking the next
-   * screenshot. Lets SPAs paint before the perception model describes a loading state.
-   */
   pageSettleDelayMs: number;
-  /**
-   * Max age of a cached page description in ms. After this time the description is
-   * re-taken even when the URL and pageMaybeChanged flag haven't changed.
-   */
   senseMaxCacheAgeMs: number;
-  /**
-   * How many loop-warning nudges to inject before hard-stopping a stuck turn.
-   * 0 = skip nudges and throw immediately (old behaviour).
-   */
   nudgeLimit: number;
-  /**
-   * Night mode safety ceilings so an unattended run always terminates: a hard
-   * step budget, a wall-clock budget, and how many identical consecutive actions
-   * the watchdog tolerates before stopping a stuck run.
-   */
   nightStepBudget: number;
   nightTimeBudgetMs: number;
   nightRepeatLimit: number;
