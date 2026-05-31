@@ -105,7 +105,7 @@ export class AppMenu {
 
   // Menu action handlers
   private handleNewTab(): void {
-    this.mainWindow.createTab("https://strawberrybrowser.com/");
+    this.mainWindow.createTab("https://google.com/");
   }
 
   private handleCloseTab(): void {

@@ -360,6 +360,11 @@ export interface AgentConfig {
    */
   senseMaxCacheAgeMs: number;
   /**
+   * How many loop-warning nudges to inject before hard-stopping a stuck turn.
+   * 0 = skip nudges and throw immediately (old behaviour).
+   */
+  nudgeLimit: number;
+  /**
    * Night mode safety ceilings so an unattended run always terminates: a hard
    * step budget, a wall-clock budget, and how many identical consecutive actions
    * the watchdog tolerates before stopping a stuck run.
@@ -386,6 +391,7 @@ export const defaultAgentConfig = (): AgentConfig => ({
   screenshotJpegQuality: Number(process.env.LLM_SCREENSHOT_JPEG_QUALITY) || 70,
   pageSettleDelayMs: Number(process.env.LLM_PAGE_SETTLE_MS ?? 400),
   senseMaxCacheAgeMs: Number(process.env.LLM_SENSE_CACHE_AGE_MS ?? 30_000),
+  nudgeLimit: Number(process.env.LLM_NUDGE_LIMIT ?? 2),
   nightStepBudget: Number(process.env.NIGHT_STEP_BUDGET) || 60,
   nightTimeBudgetMs: Number(process.env.NIGHT_TIME_BUDGET_MS) || 30 * 60 * 1000,
   nightRepeatLimit: Number(process.env.NIGHT_REPEAT_LIMIT) || 4,

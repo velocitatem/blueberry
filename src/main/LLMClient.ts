@@ -17,6 +17,7 @@ import type { Window } from "./Window";
 import {
   createTools,
   filterTools,
+  ReadCache,
   TodoStore,
   INTERACT_TOOL_NAMES,
   GROUND_TOOL_NAMES,
@@ -145,6 +146,40 @@ const normalizeToolSignature = (
   }
 };
 
+/** Build an in-context nudge that tells the agent it is stuck and how to escape. */
+const buildNudgeMessage = (sig: string, isCycling: boolean): string => {
+  const toolName = sig.split(":")[0] ?? sig;
+
+  const hints: string[] = [];
+  if (toolName === "getPageText" || toolName === "searchPage") {
+    hints.push("You already have the page content — use the data you received instead of fetching again.");
+    hints.push("If a search returned no results, the term is not on this page. Try a different term, scroll to a new section, or navigate elsewhere.");
+  } else if (toolName === "navigateToUrl") {
+    hints.push("You are navigating in circles. Check the page you are already on for links, or try a search engine instead.");
+  } else if (toolName === "clickTarget" || toolName === "clickByDescription") {
+    hints.push("The click may not be having the expected effect. Read the page description carefully and try a different target or tool.");
+  } else {
+    hints.push("Try a completely different tool or approach.");
+  }
+  hints.push("If you are genuinely blocked after trying alternatives, say so and stop — do not repeat the failing action.");
+
+  const what = isCycling
+    ? "cycling through the same small set of actions without making progress"
+    : `calling \`${toolName}\` repeatedly with the same arguments`;
+
+  return [
+    `<loop_warning>`,
+    `You have been ${what}.`,
+    ``,
+    `**Stop. Do not issue the same call again.**`,
+    ``,
+    ...hints.map((h) => `• ${h}`),
+    ``,
+    `Decide on a genuinely different next action.`,
+    `</loop_warning>`,
+  ].join("\n");
+};
+
 /** The most recent tool call in a transcript, as a canonical signature. */
 const lastToolSignature = (messages: CoreMessage[]): string | null => {
   const last = toolCallParts(messages).at(-1);
@@ -198,17 +233,14 @@ export class LLMClient {
   private messages: CoreMessage[] = [];
   private lastPageState: string | null = null;
   private stepCount = 0;
-  /** Per-URL cache: { text, ts } reused until page changes or entry expires. */
   private readonly descriptionCache = new Map<string, { text: string; ts: number }>();
-  /** Set after an action that likely changed the page, to force a fresh sense. */
   private pageMaybeChanged = true;
-  /** Most recent page description, threaded into the recorded trajectory. */
   private lastDescription: string | null = null;
   private readonly todos = new TodoStore();
-  /** Separate usage tracker for the sense (perception) model calls. */
+  private readonly readCache = new ReadCache();
   private readonly senseUsage = new UsageTracker();
-  /** Rolling history of tool signatures for loop/thrash detection in normal mode. */
   private sigHistory: string[] = [];
+  private nudgeCount = 0;
   private recorder: StepRecorder | null = null;
   private mode: AgentMode = "normal";
   private activePacketId: string | null = null;
@@ -246,7 +278,8 @@ export class LLMClient {
     this.activePacketId = packetId ?? null;
     if (mode === "night") {
       this.nightAutonomy = autonomy ?? "prepare";
-      this.nightRun = {
+      this.nightRun = { // global state for the night run (nonpersistent) TODO maybe moove to module or storage
+        // if we store we can a later use data to posttrain or smth
         startedAt: Date.now(),
         deadlineMs: Date.now() + this.config.nightTimeBudgetMs,
         stepsAtStart: this.stepCount,
@@ -263,9 +296,7 @@ export class LLMClient {
     );
   }
 
-  getMode(): AgentMode {
-    return this.mode;
-  }
+  getMode(): AgentMode { return this.mode; }
 
   getNightStatus(): NightStatus {
     const r = this.nightRun;
@@ -274,8 +305,16 @@ export class LLMClient {
       autonomy: this.nightAutonomy,
       packetId: this.activePacketId,
     };
-    if (!r) {
-      return {
+    return r ? {
+      active: r.status === "running",
+      status: r.status,
+        reason: r.reason,
+        stepsUsed: this.stepCount - r.stepsAtStart,
+        startedAt: r.startedAt,
+        deadline: r.deadlineMs,
+        ...base,
+      }
+      : {
         active: false,
         status: "idle",
         reason: null,
@@ -284,21 +323,9 @@ export class LLMClient {
         deadline: null,
         ...base,
       };
-    }
-    return {
-      active: r.status === "running",
-      status: r.status,
-      reason: r.reason,
-      stepsUsed: this.stepCount - r.stepsAtStart,
-      startedAt: r.startedAt,
-      deadline: r.deadlineMs,
-      ...base,
-    };
-  }
+  };
 
-  get languageModel(): LanguageModel | null {
-    return this.model;
-  }
+  get languageModel(): LanguageModel | null { return this.model; }
 
   getMessages = (): CoreMessage[] => this.messages;
 
@@ -309,7 +336,9 @@ export class LLMClient {
     this.descriptionCache.clear();
     this.pageMaybeChanged = true;
     this.todos.clear();
+    this.readCache.clear();
     this.sigHistory = [];
+    this.nudgeCount = 0;
     this.sendMessagesToRenderer();
   }
 
@@ -404,16 +433,6 @@ export class LLMClient {
     return { url, title };
   }
 
-  /**
-   * One user turn, run as a sense → plan → act loop. Each step the model takes is
-   * preceded (in `prepareStep`) by a fresh perception pass: a separate vision
-   * model describes the current screenshot, and that <page_description> is fed in
-   * as the most recent message. The model then plans and acts (one tool call),
-   * the tool runs, and the SDK loops to the next step until the model produces a
-   * final answer or a budget / watchdog limit trips. Driving the iteration through
-   * the SDK's step loop (rather than re-invoking the model per step) keeps the
-   * agent's momentum and a reliable completion signal.
-   */
   private async runTurn(messageId: string): Promise<void> {
     if (!this.model) throw new Error("Model not initialized");
     if (this.stepCount >= this.config.stepLimit) throw new LimitsExceeded();
@@ -423,7 +442,7 @@ export class LLMClient {
 
     let systemPrompt = buildSystemPrompt(url, title);
     let messages = this.messages;
-    let tools = createTools({ window: this.window, grounder: this.grounder, todos: this.todos });
+    let tools = createTools({ window: this.window, grounder: this.grounder, todos: this.todos, readCache: this.readCache });
 
     if (this.mode === "night" && this.activePacketId && this.nightHarness) {
       const harnessCtx = this.nightHarness.buildContext({
@@ -437,6 +456,8 @@ export class LLMClient {
         tools = filterTools(tools, harnessCtx.toolPolicy);
       }
     }
+
+    this.nudgeCount = 0;
 
     await withTurnTrace(
       { modelName: this.modelName, modelProvider: this.provider },
@@ -477,7 +498,6 @@ export class LLMClient {
     }
   }
 
-  /** The most recent user-authored text — the goal driving this turn. */
   private latestUserGoal(): string | null {
     for (let i = this.messages.length - 1; i >= 0; i -= 1) {
       const m = this.messages[i];
@@ -493,8 +513,6 @@ export class LLMClient {
     return null;
   }
 
-  /** Stop a night run that has exceeded its time budget. Thrash detection is
-   *  handled by detectThrash (called before this) using the shared sigHistory. */
   private enforceNightLimits(messages: CoreMessage[]): void {
     const run = this.nightRun;
     if (!run) return;
@@ -505,9 +523,8 @@ export class LLMClient {
       throw new LimitsExceeded(run.reason);
     }
 
-    // Per-run recurrence check: count how many times the current action has
-    // appeared since this night run started.
-    const sig = lastToolSignature(messages);
+    // we do a check for action rep
+    const sig = lastToolSignature(messages); 
     if (!sig) return;
     const runHistory = this.sigHistory.slice(run.stepsAtStart);
     const n = this.config.nightRepeatLimit;
@@ -520,12 +537,6 @@ export class LLMClient {
     }
   }
 
-  /**
-   * Sense stage: describe the current screenshot with the separate perception
-   * model. Reuses the cached description for a page until an action changes it,
-   * so consecutive read-only steps don't re-pay for perception. Returns null
-   * when sensing is disabled or no screenshot/model is available.
-   */
   private async sensePage(
     goal: string | null,
     url: string | null,
@@ -538,19 +549,11 @@ export class LLMClient {
     const cacheAge = cached ? Date.now() - cached.ts : Infinity;
     const cacheValid =
       cached && !this.pageMaybeChanged && cacheAge < this.config.senseMaxCacheAgeMs;
-    if (cacheValid) {
-      this.lastDescription = cached.text;
-      return cached.text;
-    }
-
+    if (cacheValid) { return cached?.text ?? null; }
     const screenshotDataUrl = await this.captureScreenshotDataUrl();
-    if (!screenshotDataUrl) {
-      const fallback = cached?.text ?? null;
-      this.lastDescription = fallback;
-      return fallback;
-    }
+    if (!screenshotDataUrl) { return cached?.text ?? null; }
 
-    const result = await describePage({
+    const result = await describePage({ // not too ideal but for now minimize context in main loop
       model: this.senseModel,
       modelName: this.senseModelName,
       provider: this.senseProvider,
@@ -567,7 +570,6 @@ export class LLMClient {
     return result.text;
   }
 
-  /** Capture the active tab as a downscaled JPEG data URL for the sense model. */
   private async captureScreenshotDataUrl(): Promise<string | null> {
     const tab = this.window?.activeTab;
     if (!tab) return null;
@@ -587,43 +589,44 @@ export class LLMClient {
     }
   }
 
-  /**
-   * Runs before every model step. Senses the page (a fresh <page_description>
-   * from the separate vision model), optionally attaches page_state, compacts
-   * stale tool results, and enforces night limits. The description and page_state
-   * are injected as the most recent messages so each plan step sees current
-   * perception.
-   */
-  /**
-   * Detect repeated or cycling actions across all modes. Throws LimitsExceeded
-   * when the agent is clearly stuck. Night mode also runs enforceNightLimits for
-   * the time-budget and per-run tracking on top of this check.
-   */
-  private detectThrash(messages: CoreMessage[]): void {
+  private checkThrash(messages: CoreMessage[]): string | null { // HOOK before step to nudge in harness
     const sig = lastToolSignature(messages);
-    if (!sig) return;
+    if (!sig) return null;
     this.sigHistory.push(sig);
     const n = this.config.nightRepeatLimit;
-    if (
-      this.sigHistory.length >= n &&
-      this.sigHistory.slice(-n).every((s) => s === sig)
-    ) {
-      throw new LimitsExceeded("Repeated the same action; stopping to avoid a loop.");
-    }
-    // Cycle detection: collapsing to ≤2 distinct actions over the recent window.
+
+    // Read-only tools already return a cached-result note after the first repeat.
+    // A second repeat means the model is ignoring the note — nudge immediately.
+    const isReadOnlySig =
+      sig === "getPageText" || sig.startsWith("searchPage:");
+    const consecutiveThreshold = isReadOnlySig ? 2 : n;
+
+    const consecutive =
+      this.sigHistory.length >= consecutiveThreshold &&
+      this.sigHistory.slice(-consecutiveThreshold).every((s) => s === sig);
     const win = this.sigHistory.slice(-n * 2);
-    if (win.length >= n * 2 && new Set(win).size <= 2) {
+    const cycling = win.length >= n * 2 && new Set(win).size <= 2;
+
+    if (!consecutive && !cycling) return null;
+
+    this.nudgeCount += 1;
+    if (this.nudgeCount > this.config.nudgeLimit) {
       throw new LimitsExceeded(
-        "Cycling through the same actions without making progress.",
+        consecutive
+          ? "Repeated the same action; stopping to avoid a loop."
+          : "Cycling through the same actions without making progress.",
       );
     }
+
+    this.sigHistory.splice(-consecutiveThreshold);
+    return buildNudgeMessage(sig, cycling && !consecutive);
   }
 
   private async prepareStep(
     messages: CoreMessage[],
     goal: string | null,
   ): Promise<{ messages: CoreMessage[] } | undefined> {
-    this.detectThrash(messages);
+    const nudge = this.checkThrash(messages);
     if (this.mode === "night") this.enforceNightLimits(messages);
 
     // If the most recent action changed the page, settle before screenshotting.
@@ -633,6 +636,7 @@ export class LLMClient {
       (INTERACT_TOOL_NAMES.has(lastTool) || GROUND_TOOL_NAMES.has(lastTool))
     ) {
       this.pageMaybeChanged = true;
+      this.readCache.clear();
       if (this.config.pageSettleDelayMs > 0)
         await sleep(this.config.pageSettleDelayMs);
     }
@@ -678,6 +682,11 @@ export class LLMClient {
             text: `<page_description>\nURL: ${url ?? "(unknown)"}\n${description}\n</page_description>`,
           },
         ],
+      });
+    if (nudge)
+      trailing.push({
+        role: "user",
+        content: [{ type: "text", text: nudge }],
       });
 
     if (base === messages && trailing.length === 0) return undefined;

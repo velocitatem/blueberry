@@ -36,7 +36,7 @@ export class Window {
     this._sideBar.client.setWindow(this);
 
     // Create the first tab
-    this.createTab("https://strawberrybrowser.com");
+    this.createTab("https://google.com");
 
     // Set up window resize handler
     this._baseWindow.on("resize", () => {

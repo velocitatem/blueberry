@@ -27,12 +27,12 @@ export class Tab {
 
   constructor(
     id: string,
-    url: string = "https://strawberrybrowser.com",
+    url: string = "https://google.com",
     eventSink: EventSink | null = null,
   ) {
     this._id = id;
     this._url = url;
-    this._title = "Strawberry Browser";
+    this._title = "Loading ...";
     this.eventSink = eventSink;
     this.captureListener = (event, payload) => {
       if (event.sender !== this.webContentsView.webContents) return;
@@ -304,13 +304,7 @@ export class Tab {
   }
 
   async getTabText(): Promise<string> {
-    // Prefer the page's main content region over the full document. Returning
-    // document.documentElement.innerText leads with site chrome (nav menus,
-    // tables of contents, cookie banners); after truncation the model can be
-    // left with only boilerplate and never sees the actual content, causing it
-    // to re-read/re-navigate in a loop. Fall back to the body if no main region
-    // is found.
-    return (
+    return ( // for READABLE doms we try to extract main contents not to explode context
       (await this.runJs(
         `(() => {
         try {
@@ -334,11 +328,6 @@ export class Tab {
     );
   }
 
-  /**
-   * Extract a compact structured snapshot of the active page (interactive,
-   * in-viewport elements with role/name/bbox/state + a `ref` selector). Used as
-   * the per-turn page context in place of a full-resolution screenshot.
-   */
   async getPageState(): Promise<PageStateSnapshot | null> {
     const raw = await this.runJs(getPageStateScript());
     if (!raw || typeof raw !== "object") return null;

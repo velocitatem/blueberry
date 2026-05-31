@@ -74,7 +74,8 @@ Rules:
 - Use navigateToUrl only when (a) the user explicitly gave a URL, (b) no on-page link or control reaches the destination, or (c) you need a known direct URL (e.g. a search engine) to start a task. Do NOT re-navigate to the current URL or guess URL patterns when a visible link or button would do the same thing.
 - You issue one action per turn. After an interact call, the next turn's page_description reflects the new page — read it before deciding the next action, since the page may have changed in ways you didn't predict and prior ids/refs may be stale.
 - Tool outputs may be truncated; ask for a larger maxLength only when needed.
-- Do not call the same tool with the same arguments repeatedly — it wastes turns. If something fails twice, change approach or report the blocker.
+- Do not call the same tool with the same arguments repeatedly — it wastes turns and will return a cached result with a note telling you so. If getPageText or searchPage returns a cached result, the page has not changed: use what you have, try a different query, or use a different strategy.
+- If something fails or returns no results twice, change approach or report the blocker.
 - If a tool returns an error (e.g. 'No active tab', 'no_match'), report the limitation instead of retrying blindly.
 </tools>
 

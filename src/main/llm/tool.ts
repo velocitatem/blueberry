@@ -8,10 +8,37 @@ import { createLogger } from "../logger";
 
 const log = createLogger("tool");
 
+/**
+ * Deduplication cache for read-only tools. When the same tool is called with the
+ * same args on the same URL without an intervening page change, the tool returns
+ * the cached result with a note instead of re-executing. This stops models from
+ * looping on getPageText/searchPage when the page hasn't changed.
+ */
+export class ReadCache {
+  private readonly entries = new Map<string, unknown>();
+
+  private key(toolName: string, url: string, argsKey: string): string {
+    return `${toolName}\0${url}\0${argsKey}`;
+  }
+
+  get(toolName: string, url: string, argsKey: string): unknown | undefined {
+    return this.entries.get(this.key(toolName, url, argsKey));
+  }
+
+  set(toolName: string, url: string, argsKey: string, result: unknown): void {
+    this.entries.set(this.key(toolName, url, argsKey), result);
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+}
+
 export type ToolContext = {
   window: Window | null;
   grounder?: Grounder | null;
   todos?: TodoStore;
+  readCache?: ReadCache;
 };
 
 export const MAX_PAGE_CONTENT_LENGTH = 4000;
@@ -52,6 +79,12 @@ export type ToolDef<TInput = unknown, TResult = unknown> = {
   description: string;
   inputSchema: FlexibleSchema<TInput>;
   execute: (input: TInput, ctx: ToolContext) => Promise<TResult>;
+  /**
+   * When true, buildTool wraps this tool with read-cache logic: identical calls
+   * (same tool name + URL + args) return the cached result with a note instead of
+   * re-executing. The cache is invalidated by ReadCache.clear() on page change.
+   */
+  cacheable?: boolean;
 };
 
 export type ToolDefs = Record<string, ToolDef<any, any>>;
@@ -65,6 +98,18 @@ const registry: ToolDefs = {};
 export const registerTools = <T extends ToolDefs>(defs: T): T => {
   Object.assign(registry, defs);
   return defs;
+};
+
+const CACHED_NOTE =
+  "Same result as your previous call — the page has not changed. Use the data you already have instead of calling again.";
+
+/** Deterministic serialization of tool input for use as a cache key. */
+const stableKey = (v: unknown): string => {
+  if (!v || typeof v !== "object") return String(v ?? "");
+  const obj: Record<string, unknown> = {};
+  for (const k of Object.keys(v as object).sort())
+    obj[k] = (v as Record<string, unknown>)[k];
+  try { return JSON.stringify(obj); } catch { return ""; }
 };
 
 const preview = (v: unknown, m = 600): string => {
@@ -90,16 +135,36 @@ const buildTool = (
   inputSchema: def.inputSchema,
   execute: async (input) => {
     const startedAt = Date.now();
-    log.info({ tool: name, input: preview(input) }, `tool:call ${name}`); // call back to otehr logging maybe
+    log.info({ tool: name, input: preview(input) }, `tool:call ${name}`);
+
+    // Read-cache check: return the previous result immediately for cacheable tools.
+    if (def.cacheable && ctx.readCache) {
+      const url = ctx.window?.activeTab?.url ?? "";
+      const argsKey = stableKey(input);
+      const cached = ctx.readCache.get(name, url, argsKey);
+      if (cached !== undefined) {
+        log.info({ tool: name, ms: 0 }, `tool:cached ${name}`);
+        return { ...(cached as Record<string, unknown>), note: CACHED_NOTE };
+      }
+    }
+
     try {
-      const result = await def.execute(input, ctx); // actually execute the tool
+      const result = await def.execute(input, ctx);
       const ms = Date.now() - startedAt;
       const meta = { tool: name, ms, result: preview(result) };
-      if (resultFailed(result)) log.warn(meta, `tool:fail ${name}`);
-      else log.info(meta, `tool:ok ${name}`);
+      if (resultFailed(result)) {
+        log.warn(meta, `tool:fail ${name}`);
+      } else {
+        log.info(meta, `tool:ok ${name}`);
+        // Populate cache on success for cacheable tools.
+        if (def.cacheable && ctx.readCache) {
+          const url = ctx.window?.activeTab?.url ?? "";
+          ctx.readCache.set(name, url, stableKey(input), result);
+        }
+      }
       return result;
     } catch (error) {
-      log.error({ tool: name, ms: Date.now() - startedAt, err: error instanceof Error ? error.message : String(error) }, `tool:error ${name}`); // call back to other logging maybe
+      log.error({ tool: name, ms: Date.now() - startedAt, err: error instanceof Error ? error.message : String(error) }, `tool:error ${name}`);
       throw error;
     }
   },

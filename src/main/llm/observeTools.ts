@@ -23,9 +23,6 @@ export const observeTools = registerTools({
     execute: async (_input, ctx) => {
       const tab = ctx.window?.activeTab;
       if (!tab) return { refreshed: false as const, error: "No active tab" };
-      // When page_state is auto-injected each step, returning the full snapshot
-      // here would duplicate a multi-KB blob into the transcript. Just ack; the
-      // calling harness re-attaches the fresh snapshot on the next step.
       if (process.env.LLM_ATTACH_PAGE_STATE !== "0") {
         return {
           refreshed: true as const,
@@ -38,8 +35,9 @@ export const observeTools = registerTools({
 
   getPageText: defineTool({
     description:
-      "Get the visible text content of the active page. Use this when you need to read or search page content.",
+      "Get the visible text content of the active page. If you already called this on the current URL without a page change in between, you will receive the cached text with a note — do NOT call this repeatedly; if the text is truncated and you need more, pass a larger maxLength once.",
     inputSchema: maxLengthSchema,
+    cacheable: true,
     execute: ({ maxLength }, ctx) =>
       withActiveTab(
         ctx,
@@ -55,7 +53,7 @@ export const observeTools = registerTools({
 
   searchPage: defineTool({
     description:
-      "Search the active page's visible text for a query string and return matches with surrounding context. Case-insensitive. Prefer this over getPageText when looking for a specific string.",
+      "Search the active page's visible text for a query string and return matches with surrounding context. Case-insensitive. Prefer this over getPageText when looking for a specific string. Repeated calls with the same query on the same URL return the cached result — try a different query or strategy rather than repeating.",
     inputSchema: z.object({
       query: z.string().min(1).describe("Substring to search for"),
       maxMatches: z
@@ -66,6 +64,7 @@ export const observeTools = registerTools({
         .optional()
         .describe("Maximum matches to return (default 5)"),
     }),
+    cacheable: true,
     execute: ({ query, maxMatches }, ctx) =>
       withActiveTab(
         ctx,
