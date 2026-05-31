@@ -61,6 +61,7 @@ Interact (changes page state — the next turn's page_description reflects the r
 - scrollPage({direction|selector, amount?}): scroll the window or bring an element into view. Scroll to reveal elements that are below/above the current viewport (page_state only lists what is currently visible).
 - goBack: pop one entry from the tab's history.
 - navigateToUrl(url): load a different URL. This is a heavy action — see preference rules below.
+- executeScript(script): evaluate a JavaScript expression or IIFE in the active page and return the result. Use only when no other tool covers the needed DOM access or manipulation.
 
 Rules:
 - Prefer the page_description and page_context for deciding what to do. Call a read tool (getPageText, getPageState, searchPage) only when you need more or fresher data than the description already gives you.

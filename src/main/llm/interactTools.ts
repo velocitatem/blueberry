@@ -168,6 +168,31 @@ export const interactTools = registerTools({
       ),
   }),
 
+  executeScript: defineTool({
+    description:
+      "Run arbitrary JavaScript in the active page and return the result. Use for DOM inspection, extraction, or manipulation that no other tool covers. The script runs in the page context; the return value must be JSON-serialisable. Errors are caught and returned as { error: string }.",
+    inputSchema: z.object({
+      script: z
+        .string()
+        .min(1)
+        .describe(
+          "JavaScript expression or IIFE to evaluate. Must return a JSON-serialisable value. Example: `document.title` or `(() => { return document.querySelectorAll('a').length; })()`",
+        ),
+    }),
+    execute: ({ script }, ctx) =>
+      withActiveTab(
+        ctx,
+        async (tab) => {
+          const result = await tab.runJs(
+            `(() => { try { const __r = (${script}); return { ok: true, result: __r }; } catch (e) { return { ok: false, error: String(e) }; } })()`,
+          );
+          if (!result) return { ok: false as const, error: "No result (page not ready or script returned undefined)" };
+          return result as { ok: boolean; result?: unknown; error?: string };
+        },
+        "ok",
+      ),
+  }),
+
   scrollPage: defineTool({
     description:
       "Scroll the active page. Either provide a selector to scroll an element into view, or a direction with optional pixel amount.",
