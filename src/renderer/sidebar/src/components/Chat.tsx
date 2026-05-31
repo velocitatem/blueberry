@@ -243,11 +243,20 @@ const ConversationTurnComponent: React.FC<{
 }> = ({ turn, isLoading }) => (
     <div className="pt-12 flex flex-col gap-8">
         {turn.user && <UserMessage content={turn.user.content} />}
-        {turn.assistant && <AssistantMessage content={turn.assistant.content} />}
-        {isLoading && (
-            <div className="flex justify-start">
-                <LoadingIndicator />
+        {isLoading && turn.assistant ? (
+            <div className="flex items-start gap-2">
+                <div className="shrink-0 mt-1"><LoadingIndicator /></div>
+                <AssistantMessage content={turn.assistant.content} />
             </div>
+        ) : (
+            <>
+                {turn.assistant && <AssistantMessage content={turn.assistant.content} />}
+                {isLoading && (
+                    <div className="flex justify-start">
+                        <LoadingIndicator />
+                    </div>
+                )}
+            </>
         )}
     </div>
 )

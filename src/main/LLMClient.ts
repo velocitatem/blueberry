@@ -712,11 +712,15 @@ export class LLMClient {
     this.messages.push({ role: "assistant", content: "" });
 
     let accumulated = "";
-    for await (const chunk of result.textStream) {
-      accumulated += chunk;
-      this.messages[messageIndex] = { role: "assistant", content: accumulated };
-      this.sendMessagesToRenderer();
-      this.emit(messageId, { content: chunk, isComplete: false });
+    for await (const part of result.fullStream) {
+      if (part.type === "start-step") {
+        accumulated = "";
+      } else if (part.type === "text-delta") {
+        accumulated += part.text;
+        this.messages[messageIndex] = { role: "assistant", content: accumulated };
+        this.sendMessagesToRenderer();
+        this.emit(messageId, { content: part.text, isComplete: false });
+      }
     }
 
     const steps = await result.steps;

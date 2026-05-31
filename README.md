@@ -32,6 +32,7 @@ The way we handle observing the actual browser I experimented with a variety of 
 To make the model spend more time on thinking,planning and tool-using I added [LocateAnything](https://huggingface.co/nvidia/LocateAnything-3B) which is the end-effector of the model that can take a semantic description and turn it into an action on the website and most importantly, if we run something for a full night, it runs locally with just 3-billion parameters. This can take the bulk of the work of clicking and pointing and even OCR on any screenshot. In the sample above we can even see its semantic understanding of highlighting the button with the most expensive plan.
 
 
+<video src="./demo_speeded.mp4" controls width="100%"></video>
 
 ### Running it
 
