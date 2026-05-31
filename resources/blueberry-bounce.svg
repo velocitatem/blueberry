@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64" width="48" height="64">
+  <defs>
+    <style>
+      @keyframes bb-bounce {
+        0%   { transform: translateY(0px);    animation-timing-function: cubic-bezier(0.55,0,1,0.45); }
+        48%  { transform: translateY(-22px);  animation-timing-function: cubic-bezier(0,0.55,0.45,1); }
+        100% { transform: translateY(0px);    animation-timing-function: cubic-bezier(0.55,0,1,0.45); }
+      }
+      @keyframes bb-shadow {
+        0%   { transform: scaleX(1);    opacity: .22; animation-timing-function: cubic-bezier(0.55,0,1,0.45); }
+        48%  { transform: scaleX(.42);  opacity: .07; animation-timing-function: cubic-bezier(0,0.55,0.45,1); }
+        100% { transform: scaleX(1);    opacity: .22; }
+      }
+      .bb-body   { animation: bb-bounce 0.74s infinite; }
+      .bb-shadow { transform-box: fill-box; transform-origin: center; animation: bb-shadow 0.74s infinite; }
+    </style>
+  </defs>
+
+  <!-- ground shadow -->
+  <ellipse class="bb-shadow" cx="24" cy="59" rx="12" ry="4" fill="#4159af"/>
+
+  <!-- berry -->
+  <g class="bb-body">
+    <circle cx="24" cy="34" r="14" fill="#4159af"/>
+    <circle cx="21" cy="31" r="12" fill="#4d6cd4" opacity=".8"/>
+    <!-- calyx -->
+    <g transform="translate(29,21) scale(.85)">
+      <path d="M-4-2C-6-6-2-7 0-4C2-7 6-6 4-2C7 0 6 4 2 3C0 6-4 5-3 1C-6 2-7-2-4-2Z" fill="#7593f5"/>
+      <circle r="2.2" fill="#293b75"/>
+    </g>
+  </g>
+</svg>
