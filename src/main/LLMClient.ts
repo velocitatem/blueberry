@@ -158,6 +158,10 @@ const buildNudgeMessage = (sig: string, isCycling: boolean): string => {
     hints.push("You are navigating in circles. Check the page you are already on for links, or try a search engine instead.");
   } else if (toolName === "clickTarget" || toolName === "clickByDescription") {
     hints.push("The click may not be having the expected effect. Read the page description carefully and try a different target or tool.");
+  } else if (toolName === "todoWrite") {
+    hints.push("You just wrote the same task list — writing it again changes nothing.");
+    hints.push("Stop updating the list and start acting: use a browser or page tool to perform the next pending task.");
+    hints.push("If you cannot find the right tool, say so and stop.");
   } else {
     hints.push("Try a completely different tool or approach.");
   }
@@ -687,6 +691,13 @@ export class LLMClient {
       trailing.push({
         role: "user",
         content: [{ type: "text", text: nudge }],
+      });
+
+    const todoSummary = this.todos.summary();
+    if (todoSummary)
+      trailing.push({
+        role: "user",
+        content: [{ type: "text", text: `<todo_list>\n${todoSummary}\n</todo_list>` }],
       });
 
     if (base === messages && trailing.length === 0) return undefined;

@@ -8,6 +8,7 @@ export const INTERACT_TOOL_NAMES = new Set([
   "inputText",
   "pressKey",
   "scrollPage",
+  "executeScript",
 ]);
 
 export const interactTools = registerTools({

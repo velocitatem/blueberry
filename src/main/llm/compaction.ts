@@ -7,6 +7,9 @@ const CLEARED_OUTPUTS: Record<string, { type: "text"; value: string }> = {
   "getPageText": { type: "text" as const, value: "[text cleared — re-run this tool if still needed]" },
   "searchPage": { type: "text" as const, value: "[search content cleared]" },
   "getPageState": { type: "text" as const, value: "[page_state cleared]" },
+  // todoWrite snapshots the whole list so clearing its result is safe — the live list
+  // is always injected into prepareStep context; call todoList if you need to see it.
+  "todoWrite": { type: "text" as const, value: "[todo list updated — current state is shown in <todo_list> above; call todoList to re-read it]" },
 };
 
 const isToolResultPart = (part: unknown): boolean => !!part && typeof part === "object" && (part as { type?: unknown }).type === "tool-result";

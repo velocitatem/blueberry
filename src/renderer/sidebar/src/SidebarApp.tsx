@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { MessageSquare, Workflow } from 'lucide-react'
+import { MessageSquare, Moon } from 'lucide-react'
 import { ChatProvider } from './contexts/ChatContext'
 import { Chat } from './components/Chat'
 import { Workflows } from './components/Workflows'
@@ -30,8 +30,8 @@ const SidebarContent: React.FC = () => {
                     onClick={() => setView('chat')}
                 />
                 <TabButton
-                    label="Workflows"
-                    icon={<Workflow className="size-4" />}
+                    label="Noir Mode"
+                    icon={<Moon className="size-4" />}
                     active={view === 'workflows'}
                     onClick={() => setView('workflows')}
                 />

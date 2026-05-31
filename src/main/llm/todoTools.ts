@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { defineTool, registerTools } from "./tool";
 
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
 export interface TodoItem {
   id: number;
-  text: string;
-  done: boolean;
+  content: string;
+  status: TodoStatus;
+  /** Present-progressive label shown while the task is in_progress (e.g. "Reading files…"). */
+  activeForm?: string;
   addedAt: number;
 }
 
@@ -13,29 +17,20 @@ export class TodoStore {
   private items: TodoItem[] = [];
   private nextId = 1;
 
-  add(text: string): TodoItem {
-    const item: TodoItem = {
-      id: this.nextId++,
-      text,
-      done: false,
-      addedAt: Date.now(),
-    };
-    this.items.push(item);
-    return item;
-  }
-
-  complete(id: number): boolean {
-    const item = this.items.find((i) => i.id === id);
-    if (!item || item.done) return false;
-    item.done = true;
-    return true;
-  }
-
-  remove(id: number): boolean {
-    const idx = this.items.findIndex((i) => i.id === id);
-    if (idx === -1) return false;
-    this.items.splice(idx, 1);
-    return true;
+  write(todos: Array<{ content: string; status: TodoStatus; activeForm?: string }>): TodoItem[] {
+    // Merge: match existing items by content to preserve ids across writes.
+    const existing = new Map(this.items.map((i) => [i.content, i]));
+    this.items = todos.map((t) => {
+      const prev = existing.get(t.content);
+      return {
+        id: prev?.id ?? this.nextId++,
+        content: t.content,
+        status: t.status,
+        activeForm: t.activeForm,
+        addedAt: prev?.addedAt ?? Date.now(),
+      };
+    });
+    return [...this.items];
   }
 
   list(): TodoItem[] {
@@ -43,75 +38,80 @@ export class TodoStore {
   }
 
   pending(): TodoItem[] {
-    return this.items.filter((i) => !i.done);
+    return this.items.filter((i) => i.status !== "completed");
   }
 
   clear(): void {
     this.items = [];
     this.nextId = 1;
   }
+
+  /** Compact summary injected into every prepareStep context. */
+  summary(): string | null {
+    if (this.items.length === 0) return null;
+    const lines = this.items.map((i) => {
+      const label =
+        i.status === "in_progress" && i.activeForm ? i.activeForm : i.content;
+      const tag =
+        i.status === "completed" ? "[done]" :
+        i.status === "in_progress" ? "[active]" : "[todo]";
+      return `${tag} ${label}`;
+    });
+    const done = this.items.filter((i) => i.status === "completed").length;
+    return `Tasks (${done}/${this.items.length} done):\n${lines.join("\n")}`;
+  }
 }
 
-export const todoTools = registerTools({
-  todoAdd: defineTool({
-    description:
-      "Add a sub-task or reminder to your TODO list. Use this to track what still needs to be done on a complex multi-step task so you don't lose track as context grows. Returns the assigned id.",
-    inputSchema: z.object({
-      text: z
-        .string()
-        .min(1)
-        .max(300)
-        .describe("Short description of what needs to be done"),
-    }),
-    execute: async ({ text }, ctx) => {
-      if (!ctx.todos) return { error: "TODO store not available" };
-      const item = ctx.todos.add(text);
-      return { id: item.id, text: item.text, pending: ctx.todos.pending().length };
-    },
-  }),
+const todoItemSchema = z.object({
+  content: z.string().min(1).max(300).describe("Short description of the task"),
+  status: z
+    .enum(["pending", "in_progress", "completed"])
+    .describe(
+      "pending = not started, in_progress = currently working on it, completed = done",
+    ),
+  activeForm: z
+    .string()
+    .max(200)
+    .optional()
+    .describe(
+      "Present-progressive label shown while in_progress, e.g. 'Reading files…' vs 'Read files'. Omit for pending/completed.",
+    ),
+});
 
-  todoComplete: defineTool({
+export const todoTools = registerTools({
+  todoWrite: defineTool({
     description:
-      "Mark a TODO item as done by its id. Call this as soon as you finish a sub-task so the list stays accurate.",
+      "Replace the entire TODO list with a new snapshot. Call this whenever the plan changes or a task's status changes. Pass ALL tasks (pending, in_progress, and completed) in order — omitting a task removes it. This is the only way to add tasks, start them, or mark them done.",
     inputSchema: z.object({
-      id: z.number().int().positive().describe("Id returned by todoAdd"),
+      todos: z
+        .array(todoItemSchema)
+        .describe("Full ordered list of tasks for this session"),
     }),
-    execute: async ({ id }, ctx) => {
+    execute: async ({ todos }, ctx) => {
       if (!ctx.todos) return { error: "TODO store not available" };
-      const ok = ctx.todos.complete(id);
-      if (!ok) return { error: `No pending item with id ${id}` };
-      return { completed: id, remaining: ctx.todos.pending().length };
+      const items = ctx.todos.write(todos);
+      const pending = items.filter((i) => i.status !== "completed").length;
+      const done = items.filter((i) => i.status === "completed").length;
+      return {
+        tasks: items.map((i) => ({ id: i.id, content: i.content, status: i.status })),
+        summary: `${done} done, ${pending} remaining`,
+      };
     },
   }),
 
   todoList: defineTool({
     description:
-      "List all TODO items (pending and done). Use this when you need a reminder of what's left on the current task.",
+      "Show the current TODO list. Use before declaring a task complete or when you lose track of what remains.",
     inputSchema: z.object({}),
     execute: async (_input, ctx) => {
       if (!ctx.todos) return { error: "TODO store not available" };
       const all = ctx.todos.list();
-      const pending = all.filter((i) => !i.done);
-      const done = all.filter((i) => i.done);
+      if (all.length === 0) return { tasks: [], summary: "No tasks recorded" };
+      const done = all.filter((i) => i.status === "completed").length;
       return {
-        pending: pending.map((i) => ({ id: i.id, text: i.text })),
-        done: done.map((i) => ({ id: i.id, text: i.text })),
-        summary: `${pending.length} pending, ${done.length} done`,
+        tasks: all.map((i) => ({ id: i.id, content: i.content, status: i.status, activeForm: i.activeForm })),
+        summary: `${done}/${all.length} completed`,
       };
-    },
-  }),
-
-  todoRemove: defineTool({
-    description:
-      "Remove a TODO item entirely (use when a planned step turns out to be unnecessary rather than completed).",
-    inputSchema: z.object({
-      id: z.number().int().positive().describe("Id of the item to remove"),
-    }),
-    execute: async ({ id }, ctx) => {
-      if (!ctx.todos) return { error: "TODO store not available" };
-      const ok = ctx.todos.remove(id);
-      if (!ok) return { error: `No item with id ${id}` };
-      return { removed: id, remaining: ctx.todos.pending().length };
     },
   }),
 });

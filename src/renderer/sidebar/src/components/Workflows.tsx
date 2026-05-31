@@ -257,7 +257,7 @@ export const Workflows: React.FC<{ onStarted?: () => void }> = ({ onStarted }) =
                             className={cn('flex-1', (step === 'packet' || step === 'ready') && 'bg-violet-600 hover:bg-violet-700 text-white border-violet-600')}
                         >
                             <Moon className="size-3.5" />
-                            {busy && (step === 'packet' || step === 'ready') ? 'Starting…' : 'Start'}
+                            {busy && (step === 'packet' || step === 'ready') ? 'Enabling Noir…' : 'Enable Noir'}
                         </Button>
                     </div>
                 )}
