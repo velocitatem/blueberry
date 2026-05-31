@@ -1,4 +1,4 @@
-<h1>Blueberry(noir) 🫐🌙 <img src="./resources/blueberry-bounce.svg" height="40" align="right" /></h1>
+<h1>Blueberry(noir) 🫐🌙 <img src="./resources/blueberry-bounce.svg" height="50" align="right" /></h1>
 
 Building blueberry, I focused on making it a product that can add $$$ to the economy. Most people work during the day, AI can also work during the night. To embody this blueberry observes what you do, builds a graph of your behavior and sets its own goal that runs overnight.
 
