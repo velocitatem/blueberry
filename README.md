@@ -1,4 +1,4 @@
-# Implementation
+# Blueberry(noir) 🫐🌙
 
 Building blueberry, I focused on making it a product that can add $$$ to the economy. Most people work during the day, AI can also work during the night. To embody this blueberry observes what you do, builds a graph of your behavior and sets its own goal that runs overnight.
 
@@ -18,7 +18,9 @@ The sense plan act is an approximation of something which I believe is gonna be 
 
 After reviewing the existing code and refactoring some of the parts like the ICP an tool-use to leverage a registry-like design pattern I put together a loop which logs the events into Kafka (for deployment could be somthing else) which is then queried to build a behavior graph and compiles into instructions for the night harness. Within the harness, I made a wrapper that pushes traces into DataDog which makes understanding and observing the whole system much easier.
 
-%here put a table of metaloop.png and events.png
+| Meta Loop | Events |
+|:---------:|:------:|
+| ![](./media/metaloop.png) | ![](./media/events.png) |
 
 The way we handle observing the actual browser I experimented with a variety of approaches of: passing just the DOM, passing full screenshots, using accessibility trees and finally landed on a hybrid which summarizes screenshots externally and passes simple dom understanding to the top level agent. Within the harness itself I added a masking feature which minimizes text in the tail of the trace as not to create multi-million token-spending agents (this is the red and green vertical higlights in the image).
 
