@@ -1,4 +1,4 @@
-# Blueberry(noir) 🫐🌙
+<h1>Blueberry(noir) 🫐🌙 <img src="./resources/blueberry-bounce.svg" height="40" align="right" /></h1>
 
 Building blueberry, I focused on making it a product that can add $$$ to the economy. Most people work during the day, AI can also work during the night. To embody this blueberry observes what you do, builds a graph of your behavior and sets its own goal that runs overnight.
 
@@ -33,8 +33,25 @@ To make the model spend more time on thinking,planning and tool-using I added [L
 
 
 
+### Running it
 
+Start Kafka first, then the grounder, then the app:
 
+```bash
+# 1. Start Kafka (creates the blueberry.ipc.events topic automatically)
+$ docker compose up -d
+
+# 2. Download the LocateAnything model (first time only)
+$ bun run grounder:download
+
+# 3. Start the grounder server (expect ~30s cold start on first inference)
+$ bun run grounder:server
+
+# 4. Launch the browser - another terminal
+$ bun dev
+```
+
+Browse normally to build up traces, then click **Enable Noir** to compile them and kick off the night agent.
 
 
 
@@ -115,6 +132,7 @@ It can also be a good way for us to give feedback if things are heading in the r
 ```bash
 $ bun install
 ```
+
 
 ### Development
 ```bash
