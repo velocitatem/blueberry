@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """FastAPI server for a stateful LocateAnything worker.
+Took worker from https://huggingface.co/nvidia/LocateAnything-3B official implementation
 
 Run:
   uv run --project grounder_provider uvicorn server:app --app-dir grounder_provider --host 127.0.0.1 --port 8765
 
-The Electron app calls POST /ground with:
-  { "imageDataUrl": "data:image/png;base64,...", "description": "...", "output": "point" | "box" }
 """
 
 from __future__ import annotations

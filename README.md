@@ -1,3 +1,7 @@
+# Implementation
+
+
+
 # Blueberry Browser
 
 > **⚠️ Disclaimer:** I'm not proud of this codebase! It was built in 3 hours. If you have some time left over in the challenge, feel free to refactor and clean things up!
